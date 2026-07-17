@@ -33,7 +33,7 @@ export default function SplashPage() {
 
         <button 
         className="btn w-fit inline-flex items-center gap-4 pl-6 pr-1.5 py-1.5 bg-gradient-to-r from-lavenderSoft to-lavender hover:from-lavenderHover hover:to-lavenderSoft animate-elements"
-        onClick={() => router.push("/auth")}
+        onClick={() => router.push("/auth/login")}
         >
           <span className="text-sm sm:text-base font-medium text-black">Start Assessment</span>
           <span className="btn-icon">

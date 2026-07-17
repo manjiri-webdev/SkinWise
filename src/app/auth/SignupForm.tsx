@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useRouter } from "next/navigation";
 
 export default function SignupForm() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -9,44 +11,33 @@ export default function SignupForm() {
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (password != confirmPassword) {
-      alert("Password do not Match.");
+    if (password !== confirmPassword) {
+      alert("Passwords do not match.");
       return;
     }
 
-    const { data: authData, error: authError } = await supabase.auth.signUp({ email, password });
+    const { error } = await supabase.auth.signUp({ email, password, });
 
-    if (authError) {
-      alert(authError.message);
+    if (error) {
+      alert(error.message);
       return;
     }
 
-    const user = authData.user;
-    if (!user) {
-      alert("Signup started! Please check your email to confirm your account.")
-      navigate('/login')
-      return
-    }
+    alert("Account created successfully!");
+    router.push("/auth/login");
+  };
 
-    const { data: insertData, error: insertUserError } = await supabase.from('users').insert([
-      { id: user.id, email, password }
-    ])
-
-    if (insertUserError) {
-      alert(insertUserError.message)
-    } else {
-      alert("Signup successful! Please check your email to confirm.")
-      navigate('/login')
-    }
-  }
   return (
-    <form className="space-y-4 font-semibold ">
+    <form onSubmit={handleSignup} className="space-y-4 font-semibold ">
+
       <label htmlFor="email" className="sr-only">Email</label>
-      <input type="email" placeholder="Email" className="input-glass" />
+      <input type="email" id="email" placeholder="Email" className="input-glass" value={email} onChange={(e) => setEmail(e.target.value)} required />
+
       <label htmlFor="password" className="sr-only">Password</label>
-      <input id="password" type="password" placeholder="Password" className="input-glass" />
+      <input type="password" id="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} className="input-glass" required />
+
       <label htmlFor="confirmPassword" className="sr-only">Confirm Password</label>
-      <input id="confirmPassword" type="password" placeholder="Confirm Password" className="input-glass" />
+      <input type="password" id="confirmPassword" placeholder="Confirm Password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required className="input-glass" />
 
       <button className="btn w-full font-bold bg-gradient-to-r from-pinkSoft to-pink hover:from-pinkHover hover:to-pinkSoft ">
         Create Account
