@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function LoginForm() {
   return (
     <form className="space-y-4 border-t border-[#E8DAD6] font-semibold ">
@@ -15,10 +17,6 @@ export default function LoginForm() {
           Sign In
         </button>
       </div>
-
-      <p className="mt-4 text-sm text-center text-textSecondary">
-        Don't have an account? <a className="text-[#DF7F8D] font-medium hover:text-[#C96A79]" href="/Signup">Sign Up</a>
-      </p>
     </form>
   )
 }

@@ -206,10 +206,10 @@
 
     .blob-card {
         width: clamp(300px, 88vw, 500px);
-        height: clamp(460px, 120vw, 700px);
+        height: clamp(450px, 110vw, 520px);
         position: relative;
         background: rgba(255, 255, 255, .22);
-        
+
         backdrop-filter: blur(28px);
         -webkit-backdrop-filter: blur(28px);
         overflow: hidden;
@@ -279,5 +279,29 @@
     .text-luxury {
         text-shadow: 0 1px 0 rgba(255, 255, 255, .75),
             0 10px 30px rgba(221, 184, 194, .18);
+    }
+
+    .sidebar {
+        @apply w-64 h-screen bg-white/70 backdrop-blur-md border-r border-gray-200 flex flex-col;
+    }
+
+    .sidebar-header {
+        @apply p-6 border-b border-gray-200;
+    }
+
+    .sidebar-logo {
+        @apply text-xl font-bold text-pink-400;
+    }
+
+    .sidebar-nav {
+        @apply flex-1 p-4 flex flex-col justify-between;
+    }
+
+    .sidebar-link {
+        @apply flex items-center px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-pink-100 hover:text-pink-500 transition;
+    }
+
+    .sidebar-divider {
+        @apply my-4 border-t border-gray-300;
     }
 }

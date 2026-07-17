@@ -17,14 +17,16 @@ export default function AuthCard({ mode }: { mode: "login" | "signup" }) {
 
         <img src="/images/logo2.png" alt="SkinWise" className="w-20 h-20 mb-6" />
 
-        <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-textDark text-center">
-          {isLogin ? "Welcome back to SkinWise" : "Start your personalized skincare journey"}
+        <h2 className="text-4xl font-bold text-textDark text-center leading-tight">
+          {isLogin
+            ? "Welcome Back"
+            : "Join SkinWise"}
         </h2>
 
-        <p className="text-textSecondary font-semibold text-sm sm:text-base mt-2">
+        <p className="text-textSecondary text-center mt-4 max-w-md">
           {isLogin
-            ? "Sign in to access your AI-powered skin analysis."
-            : "Create an account to unlock AI-powered recommendations."}
+            ? "Continue your personalized skincare journey powered by AI."
+            : "Create your account to receive personalized skincare insights, ingredient analysis, and AI-powered recommendations."}
         </p>
       </div>
 
@@ -35,23 +37,8 @@ export default function AuthCard({ mode }: { mode: "login" | "signup" }) {
             <div className="blob-content glass flex flex-col justify-center bg-lavenderSoft/30 shadow-floaty">
 
               <div className="blob-inner">
-                <div className="flex justify-center gap-6 mb-6">
-                  <button
-                    className={`tab-btn ${isLogin ? "text-pinkHover font-bold text-[#8D8B89] " : "text-textSecondary"}`}
-                    onClick={() => setIsLogin(true)} aria-pressed={isLogin}
-                  >
-                    Sign In
-                  </button>
-                  <button
-                    className={`tab-btn ${!isLogin ? "text-pinkHover font-bold text-[#8D8B89] " : "text-textSecondary"}`}
-                    onClick={() => setIsLogin(false)} aria-pressed={!isLogin}
-                  >
-                    Sign Up
-                  </button>
-                </div>
-
                 <button className="btn w-full py-2 mb-4 font-semibold flex items-center justify-center gap-2">
-                 <img src="/images/google-icon.png" alt="Google" className="w-5 h-5" />
+                  <img src="/images/google-icon.png" alt="Google" className="w-5 h-5" />
                   Continue with Google
                 </button>
 
@@ -63,6 +50,37 @@ export default function AuthCard({ mode }: { mode: "login" | "signup" }) {
 
                 {isLogin ? <LoginForm /> : <SignupForm />}
 
+                <div className="mt-6 text-center text-sm">
+                  {isLogin ? (
+                    <>
+                      <span className="text-textSecondary">
+                        Don't have an account?
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsLogin(false)}
+                        className="ml-1 font-semibold text-pinkHover hover:underline"
+                      >
+                        Sign Up
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-textSecondary">
+                        Already have an account?
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsLogin(true)}
+                        className="ml-1 font-semibold text-pinkHover hover:underline"
+                      >
+                        Sign In
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </div>
