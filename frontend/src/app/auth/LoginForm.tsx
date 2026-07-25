@@ -33,7 +33,7 @@ export default function LoginForm() {
       <input id="password" type="password" placeholder="Password" className="input-glass" value={password} onChange={(e) => setPassword(e.target.value)} required/>
 
       <div className="mt-4 text-sm text-end text-[#7E7775] hover:text-blue-600 ">
-        <a href="/forgotPassword">Forgot Password?</a>
+        <Link href="/auth/forgot-password">Forgot Password?</Link>
       </div>
 
       <div className="flex justify-center">

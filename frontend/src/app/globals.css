@@ -20,7 +20,6 @@
     background-position: 80% center;
 }
 
-
 @keyframes move-elements {
     0% {
         transform: translateY(0);
@@ -258,6 +257,20 @@
         .blob-inner {
             padding: 40px 20px;
         }
+    }
+
+    .blob-scroll {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(223, 127, 141, 0.35) transparent;
+    }
+
+    .blob-scroll::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    .blob-scroll::-webkit-scrollbar-thumb {
+        background: rgba(223, 127, 141, 0.35);
+        border-radius: 999px;
     }
 
 }

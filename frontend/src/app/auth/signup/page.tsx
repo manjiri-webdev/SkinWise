@@ -1,8 +1,23 @@
 "use client";
 
 import SignupForm from "../SignupForm";
+import { supabase } from "@/lib/supabase";
 
 export default function SignupPage() {
+
+    const handleGoogleSignup = async() =>{
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: "google",
+          options:{
+            redirectTo: "http://localhost:3000/auth/callback",
+          },
+        });
+    
+        if(error){
+          alert(error.message);
+        }
+      }
+      
     return (
         <main
             className="relative flex h-screen w-full bg-gradient-to-r from-creamGradient1 to-creamGradient2 items-center justify-center fluid-bg"
@@ -25,7 +40,8 @@ export default function SignupPage() {
                     <div className="blob-card bg-lavenderSoft/30 shadow-floaty">
                         <div className="blob-content glass flex flex-col justify-center bg-lavenderSoft/30 shadow-floaty">
                             <div className="blob-inner">
-                                <button className="btn w-full py-2 mb-4 font-semibold flex items-center justify-center gap-2">
+                                <button className="btn w-full py-2 mb-4 font-semibold flex items-center justify-center gap-2"
+                                onClick={handleGoogleSignup}>
                                     <img src="/images/google-icon.png" alt="Google" className="w-5 h-5" />
                                     Continue with Google
                                 </button>
