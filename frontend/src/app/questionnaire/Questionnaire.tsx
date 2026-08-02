@@ -207,7 +207,6 @@ export default function Questionnaire() {
         return false;
       }
 
-
       return true;
     } catch (err) {
       console.error(err);

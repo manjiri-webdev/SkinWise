@@ -1,0 +1,112 @@
+@layer components {
+  /* Premium camera card styles */
+  .camera-card {
+    border-radius: 1.5rem;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  }
+
+  /* Video element styling */
+  .camera-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #000;
+    border-radius: inherit;
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1;
+  }
+
+  /* Face guide overlay - positioned over video */
+  .face-guide-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+
+  /* Oval face guide */
+  .face-guide-oval {
+    width: 62%;
+    aspect-ratio: 3 / 4;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.85);
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+    transition: border-color 0.3s ease;
+  }
+
+  .face-guide-oval.ready {
+    border-color: #4ADE80;
+  }
+
+  /* Capture button styling */
+  .capture-button {
+    width: 5rem;
+    height: 5rem;
+    border-radius: 50%;
+    border: 4px solid white;
+    background: white;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+
+  .capture-button:hover:not(:disabled) {
+    transform: scale(1.05);
+  }
+
+  .capture-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .capture-button-inner {
+    width: 3.5rem;
+    height: 3.5rem;
+    border-radius: 50%;
+    background: #ec4899;
+    margin: 0.25rem;
+  }
+
+  /* Validation panel styling */
+  .validation-panel {
+    background: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-radius: 1.5rem;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  }
+
+  /* Status indicators */
+  .status-indicator {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .status-indicator.passed {
+    background: #22c55e;
+  }
+
+  .status-indicator.warning {
+    background: #eab308;
+  }
+
+  .status-indicator.failed {
+    background: #ef4444;
+  }
+
+  .status-indicator.pending {
+    background: #9ca3af;
+  }
+}
