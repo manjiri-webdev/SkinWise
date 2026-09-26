@@ -20,6 +20,9 @@ from detection.detect import detect_acne
 from analysis.acne_summary import summarize_acne
 from analysis.severity import calculate_severity
 
+import re
+from starlette.types import ASGIApp, Scope, Receive, Send
+
 cors_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -34,15 +37,32 @@ if cors_origins_env:
         if origin_clean and origin_clean not in cors_origins:
             cors_origins.append(origin_clean)
 
+class NormalizePathMiddleware:
+    """
+    Normalizes request paths by collapsing consecutive slashes (e.g. //personalization -> /personalization)
+    so routing never returns 404 due to client-side trailing/duplicate slash variations.
+    """
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] == "http":
+            scope["path"] = re.sub(r"/+", "/", scope["path"])
+            if "raw_path" in scope:
+                scope["raw_path"] = re.sub(b"/+", b"/", scope["raw_path"])
+        await self.app(scope, receive, send)
+
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com|http://localhost:\d+|http://127\.0\.0\.1:\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
+app.add_middleware(NormalizePathMiddleware)
 app.include_router(validation_router)
 app.include_router(personalization_router)
 app.include_router(history_router)
