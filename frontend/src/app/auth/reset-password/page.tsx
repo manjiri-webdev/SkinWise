@@ -3,69 +3,115 @@
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
-export default function ForgotPassword() {
-    const router = useRouter();
-    const [password, setPassword] = useState("");
-    const [confirmPassword, setConfirmPassword] = useState("");
+export default function ResetPassword() {
+  const router = useRouter();
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading] = useState(false);
 
-    const handleReset = async (e: React.FormEvent) => {
-        e.preventDefault();
+  const handleReset = async (e: React.FormEvent) => {
+    e.preventDefault();
 
-        if (password !== confirmPassword) {
-            alert("Passwords do not match.");
-            return;
-        }
+    if (password !== confirmPassword) {
+      alert("Passwords do not match.");
+      return;
+    }
 
-        const { error } = await supabase.auth.updateUser({
-            password,
-        });
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password,
+      });
 
-        if (error) {
-            alert(error.message);
-            return;
-        }
+      if (error) {
+        alert(error.message);
+        return;
+      }
 
-        alert("Password updated successfully!");
-        router.push("/auth/login");
-    };
+      alert("Password updated successfully!");
+      router.push("/auth/login");
+    } catch (err: any) {
+      alert(err?.message || "Failed to reset password.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    return (
-        <main className="relative flex h-screen w-full bg-gradient-to-r from-creamGradient1 to-creamGradient2 items-center justify-center fluid-bg"
-            style={{ backgroundImage: "url('/images/reusable-bg.webp')" }}>
+  return (
+    <main
+      className="relative flex min-h-screen w-full bg-gradient-to-r from-creamGradient1 to-creamGradient2 items-center justify-center fluid-bg px-4 sm:px-6 py-8 sm:py-10"
+      style={{ backgroundImage: "url('/images/reusable-bg.webp')" }}
+    >
+      <div className="absolute inset-0 bg-pink-900/10 backdrop-blur-[1px] pointer-events-none" />
 
-            <div className="glass w-full max-w-md p-10 rounded-3xl animate-elements">
+      <div className="relative z-10 w-full max-w-md flex items-center justify-center">
+        <div className="auth-card">
+          <div className="flex items-center gap-2 mb-6">
+            <img src="/images/logo2.png" alt="SkinWise" className="w-9 h-9 object-contain" />
+            <span className="text-xl font-bold text-[#DE688E]" style={{ fontFamily: "Georgia, serif" }}>
+              SkinWise
+            </span>
+          </div>
 
-                <h1 className="text-2xl font-bold mb-3">
-                    Reset Password
-                </h1>
+          <h1
+            className="text-2xl font-bold text-[#141414] leading-tight mb-2"
+            style={{ fontFamily: "Georgia, serif" }}
+          >
+            Reset Password
+          </h1>
 
-                <p className="text-textSecondary mb-6">
-                    Create a new password for your SkinWise account.
-                </p>
+          <p className="text-xs text-[#7E7775] mb-6 leading-relaxed">
+            Create a new password for your SkinWise account.
+          </p>
 
-                <form
-                    onSubmit={handleReset}
-                    className="space-y-5"
-                >
-
-                    <label htmlFor="password" className="sr-only">Password</label>
-                    <input id="password" type="password" placeholder="Password" className="input-glass" value={password} onChange={(e) => setPassword(e.target.value)} required />
-
-                    <label htmlFor="confirmPassword" className="sr-only">Confirm Password</label>
-                    <input type="password" id="confirmPassword" placeholder="Confirm Password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required className="input-glass" />
-
-                    <button
-                        type="submit"
-                        className="btn w-full bg-gradient-to-r from-pinkSoft to-pink"
-                    >
-                        Save New Password
-                    </button>
-
-                </form>
-
+          <form onSubmit={handleReset} className="space-y-4">
+            <div>
+              <label htmlFor="password" className="sr-only">Password</label>
+              <input
+                id="password"
+                type="password"
+                placeholder="New Password"
+                className="w-full px-4 py-3 rounded-2xl bg-white/95 border border-white/90 text-[#2D2D2D] placeholder:text-[#9A9393] text-sm shadow-[0_2px_8px_rgba(0,0,0,0.04)] focus:outline-none focus:ring-2 focus:ring-pink-300 focus:bg-white transition"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
             </div>
 
-        </main>
-    );
+            <div>
+              <label htmlFor="confirmPassword" className="sr-only">Confirm Password</label>
+              <input
+                type="password"
+                id="confirmPassword"
+                placeholder="Confirm Password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                className="w-full px-4 py-3 rounded-2xl bg-white/95 border border-white/90 text-[#2D2D2D] placeholder:text-[#9A9393] text-sm shadow-[0_2px_8px_rgba(0,0,0,0.04)] focus:outline-none focus:ring-2 focus:ring-pink-300 focus:bg-white transition"
+              />
+            </div>
+
+            <div className="flex justify-center pt-2">
+              <button
+                type="submit"
+                disabled={loading}
+                className="btn btn-rose w-48 py-2.5 font-bold text-sm flex items-center justify-center transition disabled:opacity-50 cursor-pointer"
+              >
+                <span>{loading ? "Updating password..." : "Save New Password"}</span>
+              </button>
+            </div>
+          </form>
+
+          <div className="mt-6 text-center text-xs text-[#7E7775]">
+            Back to{" "}
+            <Link href="/auth/login" className="font-semibold text-[#E06B85] hover:underline">
+              Sign In
+            </Link>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
 }

@@ -1,15 +1,72 @@
+@import "tailwindcss";
+
 @layer components {
-  /* Premium camera card styles */
-  .camera-card {
-    border-radius: 1.5rem;
-    overflow: hidden;
-    background: rgba(255, 255, 255, 0.4);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  /* White status card on the left */
+  .camera-status-card {
+    background: #FFFFFF;
+    border-radius: 32px;
+    border: 1px solid rgba(255, 255, 255, 0.95);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.05);
   }
 
-  /* Video element styling */
+  /* Blush/pink frosted card on the right for "Before we Start" and other flow states */
+  .analysis-glass-card {
+    background: linear-gradient(145deg, rgba(255, 246, 248, 0.95), rgba(252, 235, 242, 0.88));
+    border-radius: 36px;
+    border: 1.5px solid rgba(255, 255, 255, 0.95);
+    box-shadow: 0 20px 50px rgba(240, 180, 205, 0.2);
+  }
+
+  /* Dark rounded container for live camera preview */
+  .camera-feed-card {
+    border-radius: 36px;
+    overflow: hidden;
+    background: #000000;
+    border: 1.5px solid rgba(255, 255, 255, 0.4);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+  }
+
+  @media (max-width: 640px) {
+    .camera-status-card {
+      border-radius: 24px;
+    }
+    .analysis-glass-card {
+      border-radius: 24px;
+      padding: 20px 16px;
+    }
+    .camera-feed-card {
+      border-radius: 24px;
+    }
+  }
+
+  /* Clean white oval face guide */
+  .oval-face-guide {
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.85);
+    pointer-events: none;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .oval-face-guide.ready {
+    border-color: #4ADE80;
+    box-shadow: 0 0 24px rgba(74, 222, 128, 0.45);
+  }
+
+  /* Shutter button outer translucent ring */
+  .shutter-outer-ring {
+    background: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-radius: 9999px;
+    transition: transform 0.2s ease, background 0.2s ease;
+  }
+
+  .shutter-outer-ring:hover:not(:disabled) {
+    transform: scale(1.04);
+    background: rgba(255, 255, 255, 0.55);
+  }
+
+  /* Camera video element */
   .camera-video {
     width: 100%;
     height: 100%;
@@ -21,92 +78,5 @@
     top: 0;
     left: 0;
     z-index: 1;
-  }
-
-  /* Face guide overlay - positioned over video */
-  .face-guide-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-  }
-
-  /* Oval face guide */
-  .face-guide-oval {
-    width: 62%;
-    aspect-ratio: 3 / 4;
-    border-radius: 50%;
-    border: 3px solid rgba(255, 255, 255, 0.85);
-    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
-    transition: border-color 0.3s ease;
-  }
-
-  .face-guide-oval.ready {
-    border-color: #4ADE80;
-  }
-
-  /* Capture button styling */
-  .capture-button {
-    width: 5rem;
-    height: 5rem;
-    border-radius: 50%;
-    border: 4px solid white;
-    background: white;
-    cursor: pointer;
-    transition: all 0.3s ease;
-  }
-
-  .capture-button:hover:not(:disabled) {
-    transform: scale(1.05);
-  }
-
-  .capture-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .capture-button-inner {
-    width: 3.5rem;
-    height: 3.5rem;
-    border-radius: 50%;
-    background: #ec4899;
-    margin: 0.25rem;
-  }
-
-  /* Validation panel styling */
-  .validation-panel {
-    background: rgba(255, 255, 255, 0.4);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border-radius: 1.5rem;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  }
-
-  /* Status indicators */
-  .status-indicator {
-    width: 1.5rem;
-    height: 1.5rem;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .status-indicator.passed {
-    background: #22c55e;
-  }
-
-  .status-indicator.warning {
-    background: #eab308;
-  }
-
-  .status-indicator.failed {
-    background: #ef4444;
-  }
-
-  .status-indicator.pending {
-    background: #9ca3af;
   }
 }

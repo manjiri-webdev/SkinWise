@@ -1,7 +1,10 @@
+import os
+from pathlib import Path
 import torch
 from models.bisenet.model import BiSeNet
 
-MODEL_PATH = "models/bisenet/79999_iter.pth"
+BASE_DIR = Path(__file__).resolve().parent.parent
+MODEL_PATH = str(BASE_DIR / "models" / "bisenet" / "79999_iter.pth")
 
 
 def load_bisenet():

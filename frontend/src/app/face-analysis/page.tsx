@@ -1,9 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { uploadFaceImage, evaluateUploadResult, convertBackendValidation, validateLiveFrame } from "@/services/faceAnalysis";
+import {
+  uploadFaceImage,
+  evaluateUploadResult,
+  convertBackendValidation,
+  validateLiveFrame,
+} from "@/services/faceAnalysis";
+import { updateProfile } from "@/services/personalization";
 import "./face-analysis.css";
 
 import {
@@ -11,17 +17,25 @@ import {
   ShieldCheck,
   Sun,
   Glasses,
+  Meh,
   ScanFace,
   Loader2,
   CheckCircle2,
   AlertCircle,
   RotateCcw,
-  Check,
-  X,
-  AlertTriangle,
+  Upload,
+  ArrowLeft,
 } from "lucide-react";
 
-type FlowStep = "instructions" | "permission" | "live" | "capturing" | "uploading" | "success" | "error";
+type FlowStep =
+  | "instructions"
+  | "permission"
+  | "live"
+  | "capturing"
+  | "uploading"
+  | "upload_preview"
+  | "success"
+  | "error";
 
 type ValidationStatus = "passed" | "warning" | "failed" | "pending";
 
@@ -37,106 +51,105 @@ interface ValidationState {
   singleFace: ValidationCheck;
   brightness: ValidationCheck;
   faceOrientation: ValidationCheck;
-  blur: ValidationCheck;
+  imageClarity: ValidationCheck;
   readyForAnalysis: boolean;
+  facePositionGuidance: string;
 }
+
+const initialValidationState: ValidationState = {
+  faceDetected: {
+    id: "faceDetected",
+    label: "Face Detected",
+    status: "pending",
+    message: "Looking for face...",
+  },
+  singleFace: {
+    id: "singleFace",
+    label: "Single Face",
+    status: "pending",
+    message: "Ensure only one face is visible",
+  },
+  brightness: {
+    id: "brightness",
+    label: "Lighting",
+    status: "pending",
+    message: "Check lighting conditions",
+  },
+  faceOrientation: {
+    id: "faceOrientation",
+    label: "Face Position",
+    status: "pending",
+    message: "Look straight into camera",
+  },
+  imageClarity: {
+    id: "imageClarity",
+    label: "Image Clarity",
+    status: "pending",
+    message: "Checking image sharpness",
+  },
+  readyForAnalysis: false,
+  facePositionGuidance: "Keep your face centered in the frame.",
+};
 
 export default function FaceAnalysis() {
   const [flowStep, setFlowStep] = useState<FlowStep>("instructions");
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [validation, setValidation] = useState<ValidationState>({
-    faceDetected: { id: "faceDetected", label: "Face detected", status: "pending", message: "Waiting for face detection..." },
-    singleFace: { id: "singleFace", label: "Single face", status: "pending", message: "Ensure only one face is visible" },
-    brightness: { id: "brightness", label: "Lighting", status: "pending", message: "Check lighting conditions" },
-    faceOrientation: { id: "faceOrientation", label: "Face position", status: "pending", message: "Face the camera directly" },
-    blur: { id: "blur", label: "Image clarity", status: "pending", message: "Hold steady for clear image" },
-    readyForAnalysis: false,
-  });
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [uploadedFilePreview, setUploadedFilePreview] = useState<string | null>(null);
+  const [validation, setValidation] = useState<ValidationState>(initialValidationState);
   const [isValidating, setIsValidating] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
   useEffect(() => {
-    // Ensure video element is properly configured
-    if (videoRef.current) {
-      console.log("Video element ref is available");
-    }
-    
     return () => {
       stopCamera();
     };
   }, []);
 
-  // Debug: Log when video ref changes
-  useEffect(() => {
-    console.log("Video ref changed:", videoRef.current);
-    if (videoRef.current) {
-      console.log("Video element dimensions:", videoRef.current.offsetWidth, "x", videoRef.current.offsetHeight);
-      console.log("Video srcObject:", videoRef.current.srcObject);
-    }
-  }, [flowStep]);
-
-  // Attach stream to video element when both are ready
+  // Attach stream to video element when both stream and element are ready
   useEffect(() => {
     if (streamReady && videoRef.current && streamRef.current) {
-      console.log("Both stream and video ref are ready, attaching stream...");
       const video = videoRef.current;
       const stream = streamRef.current;
-      
       video.srcObject = stream;
-      
+
       video.onloadedmetadata = async () => {
-        console.log("Video metadata loaded, dimensions:", video.videoWidth, "x", video.videoHeight);
-        console.log("Video readyState:", video.readyState);
-        
         try {
           await video.play();
-          console.log("Video started playing successfully");
-          console.log("Video paused:", video.paused);
-          
-          // Force a reflow to ensure the video is rendered
-          video.style.setProperty('display', 'block');
-          
+          video.style.setProperty("display", "block");
         } catch (playError) {
           console.error("Video play error:", playError);
           setPermissionError("Unable to start camera. Please try again.");
         }
       };
-      
+
       video.onerror = (error) => {
         console.error("Video element error:", error);
         setPermissionError("Camera error. Please check your device and try again.");
       };
 
-      // Fallback: try to play immediately if metadata is already loaded
       if (video.readyState >= 2) {
         try {
           video.play();
-          console.log("Video started playing immediately (metadata already loaded)");
         } catch (playError) {
           console.error("Immediate video play error:", playError);
         }
       }
     } else if (streamReady && !videoRef.current) {
-      console.log("Stream is ready but video ref is null, waiting for video element to render...");
-      // Retry after a short delay using setTimeout
       const retryTimer = setTimeout(() => {
         if (videoRef.current && streamRef.current) {
-          console.log("Retry: Video ref is now available, attaching stream...");
           const video = videoRef.current;
-          const stream = streamRef.current;
-          
-          video.srcObject = stream;
-          
+          video.srcObject = streamRef.current;
           video.onloadedmetadata = async () => {
-            console.log("Video metadata loaded (retry), dimensions:", video.videoWidth, "x", video.videoHeight);
             try {
               await video.play();
-              console.log("Video started playing successfully (retry)");
             } catch (playError) {
               console.error("Video play error (retry):", playError);
             }
@@ -153,37 +166,35 @@ export default function FaceAnalysis() {
     streamRef.current = null;
   };
 
+  const stopCameraAndReturn = () => {
+    stopCamera();
+    setStreamReady(false);
+    setIsValidating(false);
+    setValidation(initialValidationState);
+    setFlowStep("instructions");
+  };
+
   const requestCameraAccess = async () => {
     setFlowStep("permission");
     setPermissionError(null);
     setStreamReady(false);
 
     try {
-      console.log("Requesting camera access...");
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { 
+        video: {
           facingMode: "user",
           width: { ideal: 1280 },
-          height: { ideal: 720 }
+          height: { ideal: 720 },
         },
         audio: false,
       });
 
-      console.log("Camera access granted, stream obtained:", stream);
       streamRef.current = stream;
-
-      // First change to live step to render the video element
       setFlowStep("live");
-      
-      // Wait for the video element to be rendered (React needs a render cycle)
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      // Set stream ready to trigger the useEffect that attaches the stream
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
       setStreamReady(true);
-
-      // Start live validation
       setIsValidating(true);
-
     } catch (err) {
       console.error("Camera access error:", err);
       setPermissionError(
@@ -193,64 +204,120 @@ export default function FaceAnalysis() {
     }
   };
 
-  // Set up live validation interval when in live mode
+  // Live frame validation interval
   useEffect(() => {
     let validationInterval: NodeJS.Timeout | null = null;
 
     if (flowStep === "live" && isValidating) {
       validationInterval = setInterval(async () => {
-        if (!videoRef.current || !canvasRef.current) {
-          return;
-        }
+        if (!videoRef.current || !canvasRef.current) return;
 
         try {
           const video = videoRef.current;
           const canvas = canvasRef.current;
-          
-          // Set canvas dimensions to match video
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          
+
+          canvas.width = video.videoWidth || 640;
+          canvas.height = video.videoHeight || 480;
+
           const ctx = canvas.getContext("2d");
           if (!ctx) return;
 
-          // Mirror the image horizontally (CSS already mirrors, so canvas needs to match)
+          // Mirror image for canvas frame
           ctx.translate(canvas.width, 0);
           ctx.scale(-1, 1);
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-          // Convert canvas to blob
-          canvas.toBlob(async (blob) => {
-            if (!blob) return;
+          canvas.toBlob(
+            async (blob) => {
+              if (!blob) return;
 
-            const file = new File([blob], "live-frame.jpg", { type: "image/jpeg" });
-            
-            try {
-              const backendValidation = await validateLiveFrame(file);
-              const frontendValidation = convertBackendValidation(backendValidation);
-              
-              setValidation(frontendValidation);
-            } catch (error) {
-              console.error("Live validation error:", error);
-              // Don't clear validation on error, just log it
-            }
-          }, "image/jpeg", 0.5);
+              const file = new File([blob], "live-frame.jpg", { type: "image/jpeg" });
+
+              try {
+                const backendValidation = await validateLiveFrame(file);
+                const frontendValidation = convertBackendValidation(backendValidation);
+
+                const blurCheck = (backendValidation.validation as any)?.blur;
+                const imageClarityStatus: ValidationStatus = blurCheck?.status
+                  ? (blurCheck.status as ValidationStatus)
+                  : frontendValidation.brightness.status === "passed"
+                  ? "passed"
+                  : "warning";
+
+                const imageClarityMessage =
+                  blurCheck?.message ||
+                  (imageClarityStatus === "passed"
+                    ? "Image is clear"
+                    : "Hold still for sharpest focus");
+
+                setValidation({
+                  faceDetected: {
+                    id: "faceDetected",
+                    label: "Face Detected",
+                    status: frontendValidation.faceDetected.status,
+                    message:
+                      frontendValidation.faceDetected.status === "passed"
+                        ? "Successfully detected"
+                        : frontendValidation.faceDetected.message,
+                  },
+                  singleFace: {
+                    id: "singleFace",
+                    label: "Single Face",
+                    status: frontendValidation.singleFace.status,
+                    message:
+                      frontendValidation.singleFace.status === "passed"
+                        ? "confirmed"
+                        : frontendValidation.singleFace.message,
+                  },
+                  brightness: {
+                    id: "brightness",
+                    label: "Lighting",
+                    status: frontendValidation.brightness.status,
+                    message:
+                      frontendValidation.brightness.status === "passed"
+                        ? "Good lighting"
+                        : frontendValidation.brightness.message || "move to brighter place",
+                  },
+                  faceOrientation: {
+                    id: "faceOrientation",
+                    label: "Face Position",
+                    status: frontendValidation.faceOrientation.status,
+                    message:
+                      frontendValidation.faceOrientation.status === "passed"
+                        ? "look straight into camera"
+                        : frontendValidation.faceOrientation.message || "look straight into camera",
+                  },
+                  imageClarity: {
+                    id: "imageClarity",
+                    label: "Image Clarity",
+                    status: imageClarityStatus,
+                    message: imageClarityMessage,
+                  },
+                  readyForAnalysis: frontendValidation.readyForAnalysis,
+                  facePositionGuidance:
+                    frontendValidation.facePositionGuidance ||
+                    "Keep your face centered in the oval guide.",
+                });
+              } catch (error) {
+                console.error("Live validation error:", error);
+              }
+            },
+            "image/jpeg",
+            0.5
+          );
         } catch (error) {
           console.error("Frame capture error:", error);
         }
-      }, 2000); // Validate every 2 seconds
+      }, 2000);
     }
 
-    // Cleanup interval when component unmounts or flow changes
     return () => {
       if (validationInterval) {
         clearInterval(validationInterval);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flowStep, isValidating]);
 
-  // Stop validation when leaving live mode
   useEffect(() => {
     if (flowStep !== "live") {
       setIsValidating(false);
@@ -264,62 +331,78 @@ export default function FaceAnalysis() {
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Mirror the image horizontally (CSS already mirrors, so canvas needs to match)
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    canvas.toBlob(async (blob) => {
-      if (!blob) return;
+    canvas.toBlob(
+      async (blob) => {
+        if (!blob) return;
 
-      stopCamera();
-      setFlowStep("uploading");
-      setUploadError(null);
+        stopCamera();
+        setFlowStep("uploading");
+        setUploadError(null);
 
-      const file = new File([blob], "face-capture.jpg", { type: "image/jpeg" });
+        const file = new File([blob], "face-capture.jpg", { type: "image/jpeg" });
 
-      try {
-        const result = await uploadFaceImage(file);
-        
-        // Try to use new backend validation format first
-        if ('ready_for_analysis' in result && 'validation' in result) {
-          const backendValidation = result as any;
-          const frontendValidation = convertBackendValidation(backendValidation);
-          
-          if (!frontendValidation.readyForAnalysis) {
-            // Get the first failed validation message
-            const failedCheck = Object.values(frontendValidation).find(
-              (check): check is ValidationCheck => 
-                typeof check === 'object' && check.status === 'failed'
-            );
-            setUploadError(failedCheck?.message || "Please adjust your position and try again.");
-            setFlowStep("error");
-            return;
+        try {
+          const result = await uploadFaceImage(file, false);
+
+          if ("ready_for_analysis" in result && "validation" in result) {
+            const backendValidation = result as any;
+            const frontendValidation = convertBackendValidation(backendValidation);
+
+            if (!backendValidation.ready_for_analysis) {
+              const val = backendValidation.validation;
+              let failedMessage = "Please adjust your position and try again.";
+
+              if (val.face_detection?.status === "failed") {
+                failedMessage = val.face_detection.message;
+              } else if (val.single_face?.status === "failed") {
+                failedMessage = val.single_face.message;
+              } else if (val.brightness?.status === "failed") {
+                failedMessage = val.brightness.message;
+              } else if (val.face_orientation?.status === "failed") {
+                failedMessage = val.face_orientation.message;
+              } else if (val.blur?.status === "failed") {
+                failedMessage = val.blur.message;
+              }
+
+              setUploadError(failedMessage);
+              setFlowStep("error");
+              return;
+            }
+
+            setValidation((prev) => ({
+              ...prev,
+              ...frontendValidation,
+            }));
+          } else {
+            const { passed, reason } = evaluateUploadResult(result);
+            if (!passed) {
+              setUploadError(reason);
+              setFlowStep("error");
+              return;
+            }
           }
-        } else {
-          // Fall back to legacy validation
-          const { passed, reason } = evaluateUploadResult(result);
-          if (!passed) {
-            setUploadError(reason);
-            setFlowStep("error");
-            return;
-          }
+
+          await markFaceAnalysisComplete();
+          setFlowStep("success");
+        } catch (err) {
+          console.error(err);
+          setUploadError("Something went wrong while analyzing your photo. Please try again.");
+          setFlowStep("error");
         }
-
-        await markFaceAnalysisComplete();
-        setFlowStep("success");
-      } catch (err) {
-        console.error(err);
-        setUploadError("Something went wrong while analyzing your photo. Please try again.");
-        setFlowStep("error");
-      }
-    }, "image/jpeg", 0.5);
+      },
+      "image/jpeg",
+      0.8
+    );
   };
 
   const markFaceAnalysisComplete = async () => {
@@ -329,357 +412,551 @@ export default function FaceAnalysis() {
 
     if (!user) return;
 
-    await supabase
-      .from("user_profiles")
-      .update({
+    try {
+      await updateProfile({
         face_analysis_completed: true,
         onboarding_completed: true,
-      })
-      .eq("id", user.id);
+      });
+    } catch (error) {
+      console.error("Failed to mark face analysis complete:", error);
+    }
   };
 
   const retake = async () => {
     setUploadError(null);
-    // Reset validation state
-    setValidation({
-      faceDetected: { id: "faceDetected", label: "Face detected", status: "pending", message: "Waiting for face detection..." },
-      singleFace: { id: "singleFace", label: "Single face", status: "pending", message: "Ensure only one face is visible" },
-      brightness: { id: "brightness", label: "Lighting", status: "pending", message: "Check lighting conditions" },
-      faceOrientation: { id: "faceOrientation", label: "Face position", status: "pending", message: "Face the camera directly" },
-      blur: { id: "blur", label: "Image clarity", status: "pending", message: "Hold steady for clear image" },
-      readyForAnalysis: false,
-    });
-    await requestCameraAccess();
+    setValidation(initialValidationState);
+    setUploadedFile(null);
+    setUploadedFilePreview(null);
+    setFlowStep("instructions");
   };
 
-  const getStatusIcon = (status: ValidationStatus) => {
-    switch (status) {
-      case "passed":
-        return <Check size={16} className="text-green-500" />;
-      case "warning":
-        return <AlertTriangle size={16} className="text-yellow-500" />;
-      case "failed":
-        return <X size={16} className="text-red-500" />;
-      default:
-        return <Loader2 size={16} className="text-gray-400 animate-spin" />;
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.match(/image\/(jpeg|jpg|png)/i)) {
+      setUploadError("Please select a JPG, JPEG, or PNG image file.");
+      return;
+    }
+
+    if (file.size > 8 * 1024 * 1024) {
+      setUploadError("Image size must be less than 8MB.");
+      return;
+    }
+
+    setUploadedFile(file);
+    setUploadError(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setUploadedFilePreview(e.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+
+    stopCamera();
+    setFlowStep("upload_preview");
+  };
+
+  const analyzeUploadedPhoto = async () => {
+    if (!uploadedFile) return;
+
+    setFlowStep("uploading");
+    setUploadError(null);
+
+    try {
+      const result = await uploadFaceImage(uploadedFile, true);
+
+      if ("ready_for_analysis" in result && "validation" in result) {
+        const backendValidation = result as any;
+        const frontendValidation = convertBackendValidation(backendValidation);
+
+        if (!backendValidation.ready_for_analysis) {
+          const val = backendValidation.validation;
+          let failedMessage = "Please adjust your photo and try again.";
+
+          if (val.face_detection?.status === "failed") {
+            failedMessage = val.face_detection.message;
+          } else if (val.single_face?.status === "failed") {
+            failedMessage = val.single_face.message;
+          } else if (val.brightness?.status === "failed") {
+            failedMessage = val.brightness.message;
+          } else if (val.face_orientation?.status === "failed") {
+            failedMessage = val.face_orientation.message;
+          } else if (val.blur?.status === "failed") {
+            failedMessage = val.blur.message;
+          }
+
+          setUploadError(failedMessage);
+          setFlowStep("upload_preview");
+          return;
+        }
+
+        setValidation((prev) => ({
+          ...prev,
+          ...frontendValidation,
+        }));
+      } else {
+        const { passed, reason } = evaluateUploadResult(result);
+        if (!passed) {
+          setUploadError(reason);
+          setFlowStep("upload_preview");
+          return;
+        }
+      }
+
+      await markFaceAnalysisComplete();
+      setFlowStep("success");
+    } catch (err) {
+      console.error("Upload error:", err);
+      setUploadError("Something went wrong while analyzing your photo. Please try again.");
+      setFlowStep("upload_preview");
     }
   };
 
-  const getStatusColor = (status: ValidationStatus) => {
+  const cancelUpload = () => {
+    setUploadedFile(null);
+    setUploadedFilePreview(null);
+    setUploadError(null);
+    setFlowStep("instructions");
+  };
+
+  const isCameraActive = flowStep === "live" || flowStep === "capturing";
+
+  const getStatusDotColor = (status: ValidationStatus) => {
+    if (!isCameraActive) return "bg-[#D1D5DB]";
     switch (status) {
       case "passed":
-        return "bg-green-500";
+        return "bg-[#7DBE95]";
       case "warning":
-        return "bg-yellow-500";
+        return "bg-[#E8B058]";
       case "failed":
-        return "bg-red-500";
+        return "bg-[#E07A7A]";
       default:
-        return "bg-gray-400";
+        return "bg-[#D1D5DB]";
     }
   };
 
-  const passedChecksCount = Object.values(validation).filter(
-    (check): check is ValidationCheck => 
-      typeof check === 'object' && check.status === 'passed'
-  ).length;
-  
+  const validationChecksList = [
+    validation.faceDetected,
+    validation.singleFace,
+    validation.brightness,
+    validation.faceOrientation,
+    validation.imageClarity,
+  ];
+
+  const passedChecksCount = isCameraActive
+    ? validationChecksList.filter((check) => check.status === "passed").length
+    : 0;
+
   const totalChecks = 5;
 
   return (
-    <main className="min-h-screen w-full bg-gradient-to-br from-lavender/20 via-pink-50/30 to-creamGradient2/20 flex justify-center items-center p-4 md:p-8">
-      <div className="w-full max-w-6xl flex flex-col lg:flex-row gap-6 items-center justify-center">
-        
-        {/* Left Validation Panel */}
-        <div className="w-full lg:w-80 order-2 lg:order-1">
-          <div className="glass p-6 rounded-3xl bg-white/40 backdrop-blur-xl shadow-floaty animate-elements">
-            <h2 className="text-xl font-semibold text-[#2D2D2D] mb-6 flex items-center gap-2">
-              <ScanFace className="text-pink-400" size={24} />
-              Camera Status
-            </h2>
-            
-            <div className="space-y-4">
-              {/* Face Detected */}
-              <div className="flex items-start gap-3">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center ${getStatusColor(validation.faceDetected.status)}`}>
-                  {getStatusIcon(validation.faceDetected.status)}
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-[#2D2D2D]">{validation.faceDetected.label}</p>
-                  <p className="text-xs text-textSecondary mt-1">{validation.faceDetected.message}</p>
-                </div>
-              </div>
-
-              {/* Single Face */}
-              <div className="flex items-start gap-3">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center ${getStatusColor(validation.singleFace.status)}`}>
-                  {getStatusIcon(validation.singleFace.status)}
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-[#2D2D2D]">{validation.singleFace.label}</p>
-                  <p className="text-xs text-textSecondary mt-1">{validation.singleFace.message}</p>
-                </div>
-              </div>
-
-              {/* Brightness */}
-              <div className="flex items-start gap-3">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center ${getStatusColor(validation.brightness.status)}`}>
-                  {getStatusIcon(validation.brightness.status)}
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-[#2D2D2D]">{validation.brightness.label}</p>
-                  <p className="text-xs text-textSecondary mt-1">{validation.brightness.message}</p>
-                </div>
-              </div>
-
-              {/* Face Orientation */}
-              <div className="flex items-start gap-3">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center ${getStatusColor(validation.faceOrientation.status)}`}>
-                  {getStatusIcon(validation.faceOrientation.status)}
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-[#2D2D2D]">{validation.faceOrientation.label}</p>
-                  <p className="text-xs text-textSecondary mt-1">{validation.faceOrientation.message}</p>
-                </div>
-              </div>
-
-              {/* Blur */}
-              <div className="flex items-start gap-3">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center ${getStatusColor(validation.blur.status)}`}>
-                  {getStatusIcon(validation.blur.status)}
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-[#2D2D2D]">{validation.blur.label}</p>
-                  <p className="text-xs text-textSecondary mt-1">{validation.blur.message}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Progress */}
-            <div className="mt-6 pt-6 border-t border-pink-200/50">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-[#2D2D2D]">Progress</span>
-                <span className="text-sm font-semibold text-pink-400">{passedChecksCount}/{totalChecks} checks passed</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div 
-                  className="bg-gradient-to-r from-pink-300 to-pink-400 h-2 rounded-full transition-all duration-500 ease-out"
-                  style={{ width: `${(passedChecksCount / totalChecks) * 100}%` }}
-                />
-              </div>
-              
-              {validation.readyForAnalysis && (
-                <div className="mt-4 flex items-center gap-2 text-green-600 bg-green-50 px-4 py-3 rounded-xl">
-                  <CheckCircle2 size={20} />
-                  <span className="text-sm font-semibold">✅ Ready for Analysis</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Center Camera Area */}
-        <div className="w-full lg:flex-1 order-1 lg:order-2 flex flex-col items-center">
-          <div className="w-full max-w-lg">
-            <div className="text-center mb-6">
-              <h1 className="text-3xl md:text-4xl font-bold text-[#2D2D2D]">AI Face Analysis</h1>
-              <p className="text-textSecondary mt-2 text-sm md:text-base">
+    <main className="min-h-screen w-full bg-[#F7F4EF] flex items-center justify-center p-3 sm:p-6 lg:p-8">
+      <div className="w-full max-w-5xl flex flex-col lg:flex-row items-center lg:items-stretch justify-between gap-6 lg:gap-8">
+        {/* Left Column: Heading & Camera Status Card */}
+        <div className="w-full lg:w-72 shrink-0 flex flex-col justify-between py-1">
+          <div>
+            <div className="mb-4">
+              <h1
+                className="text-2xl sm:text-3xl font-bold text-[#141414] leading-tight"
+                style={{ fontFamily: "Georgia, serif" }}
+              >
+                AI Skin Analysis
+              </h1>
+              <p className="text-xs sm:text-sm text-[#6B6375] mt-1.5 leading-relaxed">
                 Position your face in the oval guide for optimal analysis
               </p>
             </div>
 
-            {/* Camera Card */}
-            <div className="glass rounded-3xl overflow-hidden bg-white/40 backdrop-blur-xl shadow-floaty animate-elements">
-              
-              {flowStep === "instructions" && (
-                <div className="p-8 flex flex-col items-center text-center gap-6">
-                  <div className="w-20 h-20 rounded-full bg-gradient-to-br from-pink-100 to-pink-200 flex items-center justify-center">
-                    <ScanFace className="text-pink-400" size={36} />
-                  </div>
-                  <h2 className="text-2xl font-semibold text-[#2D2D2D]">Before we start</h2>
-
-                  <div className="flex flex-col gap-4 w-full text-left">
-                    <div className="flex items-start gap-3 p-3 bg-pink-50/50 rounded-xl">
-                      <Sun size={20} className="text-pink-400 mt-1 shrink-0" />
-                      <p className="text-sm text-textSecondary">
-                        Find a well-lit spot, ideally facing a window or light source.
-                      </p>
-                    </div>
-                    <div className="flex items-start gap-3 p-3 bg-pink-50/50 rounded-xl">
-                      <Glasses size={20} className="text-pink-400 mt-1 shrink-0" />
-                      <p className="text-sm text-textSecondary">
-                        Remove glasses and pull back hair covering your face.
-                      </p>
-                    </div>
-                    <div className="flex items-start gap-3 p-3 bg-pink-50/50 rounded-xl">
-                      <ScanFace size={20} className="text-pink-400 mt-1 shrink-0" />
-                      <p className="text-sm text-textSecondary">
-                        Hold your phone at eye level and keep a neutral expression.
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    className="btn w-full bg-gradient-to-r from-pink-300 to-pink-400 text-white hover:from-pink-400 hover:to-pink-500 flex items-center justify-center gap-2 py-4 rounded-xl font-medium shadow-lg shadow-pink-200/50 transition-all duration-300"
-                    onClick={requestCameraAccess}
-                  >
-                    <Camera size={20} /> Enable Camera
-                  </button>
-                </div>
-              )}
-
-              {flowStep === "permission" && (
-                <div className="p-8 flex flex-col items-center text-center gap-6 min-h-[400px] justify-center">
-                  {!permissionError ? (
-                    <>
-                      <Loader2 className="animate-spin text-pink-400" size={48} />
-                      <p className="text-textSecondary">Requesting camera access...</p>
-                    </>
-                  ) : (
-                    <>
-                      <div className="w-20 h-20 rounded-full bg-red-100 flex items-center justify-center">
-                        <AlertCircle className="text-red-400" size={36} />
-                      </div>
-                      <p className="text-sm text-textSecondary max-w-xs">{permissionError}</p>
-                      <button
-                        type="button"
-                        className="btn bg-gradient-to-r from-pink-300 to-pink-400 text-white hover:from-pink-400 hover:to-pink-500 flex items-center gap-2 py-3 px-6 rounded-xl font-medium"
-                        onClick={requestCameraAccess}
-                      >
-                        <RotateCcw size={18} /> Try Again
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {(flowStep === "live" || flowStep === "capturing") && (
-                <div className="relative">
-                  {/* Camera Container */}
-                  <div className="relative aspect-[3/4] bg-black rounded-3xl overflow-hidden">
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      className="camera-video w-full h-full object-cover"
-                      style={{ 
-                        transform: 'scaleX(-1)',
-                        backgroundColor: '#000',
-                        width: '100%',
-                        height: '100%'
-                      }}
-                      width="1280"
-                      height="720"
-                    />
-                    
-                    {/* Face Guide Overlay */}
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-                      <div className="relative">
-                        {/* Oval Face Guide */}
-                        <div className={`w-48 h-64 md:w-56 md:h-72 border-4 border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.5)] transition-all duration-300 ${
-                          validation.readyForAnalysis ? 'border-green-400' : 'border-white/60'
-                        }`} />
-                        
-                        {/* Corner Guides */}
-                        <div className="absolute -top-2 -left-2 w-8 h-8 border-t-4 border-l-4 border-white/60 rounded-tl-lg" />
-                        <div className="absolute -top-2 -right-2 w-8 h-8 border-t-4 border-r-4 border-white/60 rounded-tr-lg" />
-                        <div className="absolute -bottom-2 -left-2 w-8 h-8 border-b-4 border-l-4 border-white/60 rounded-bl-lg" />
-                        <div className="absolute -bottom-2 -right-2 w-8 h-8 border-b-4 border-r-4 border-white/60 rounded-br-lg" />
-                      </div>
-                    </div>
-
-                    {/* Capturing Indicator */}
-                    {flowStep === "capturing" && (
-                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                        <div className="w-16 h-16 rounded-full border-4 border-white/30 animate-ping" />
-                        <div className="absolute w-16 h-16 rounded-full border-4 border-white/60" />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Capture Button */}
-                  <div className="p-6 flex justify-center">
-                    <button
-                      type="button"
-                      disabled={!validation.readyForAnalysis || flowStep === "capturing"}
-                      onClick={captureAndUpload}
-                      className={`w-20 h-20 rounded-full border-4 transition-all duration-300 ${
-                        validation.readyForAnalysis 
-                          ? 'bg-white border-pink-300 hover:bg-pink-50 cursor-pointer' 
-                          : 'bg-gray-300 border-gray-400 cursor-not-allowed opacity-50'
-                      }`}
-                    >
-                      {flowStep === "capturing" ? (
-                        <Loader2 className="animate-spin text-pink-400 mx-auto" size={32} />
-                      ) : (
-                        <div className={`w-14 h-14 rounded-full mx-auto transition-all duration-300 ${
-                          validation.readyForAnalysis ? 'bg-pink-400' : 'bg-gray-400'
-                        }`} />
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {flowStep === "uploading" && (
-                <div className="p-8 flex flex-col items-center text-center gap-6 min-h-[400px] justify-center">
-                  <Loader2 className="animate-spin text-pink-400" size={48} />
-                  <p className="text-textSecondary">Analyzing your photo...</p>
-                </div>
-              )}
-
-              {flowStep === "success" && (
-                <div className="p-8 flex flex-col items-center text-center gap-6 min-h-[400px] justify-center">
-                  <div className="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center">
-                    <CheckCircle2 className="text-green-500" size={36} />
-                  </div>
-                  <h2 className="text-xl font-semibold text-[#2D2D2D]">You're all set!</h2>
-                  <p className="text-sm text-textSecondary max-w-xs">
-                    Your photo passed quality checks. We're putting together your personalized skincare profile.
-                  </p>
-                  <button
-                    type="button"
-                    className="btn w-full bg-gradient-to-r from-pink-300 to-pink-400 text-white hover:from-pink-400 hover:to-pink-500 py-4 rounded-xl font-medium"
-                    onClick={() => router.push("/dashboard")}
-                  >
-                    Go to Dashboard
-                  </button>
-                </div>
-              )}
-
-              {flowStep === "error" && (
-                <div className="p-8 flex flex-col items-center text-center gap-6 min-h-[400px] justify-center">
-                  <div className="w-20 h-20 rounded-full bg-red-100 flex items-center justify-center">
-                    <AlertCircle className="text-red-400" size={36} />
-                  </div>
-                  <p className="text-sm text-textSecondary max-w-xs">{uploadError}</p>
-                  <button
-                    type="button"
-                    className="btn bg-gradient-to-r from-pink-300 to-pink-400 text-white hover:from-pink-400 hover:to-pink-500 flex items-center gap-2 py-3 px-6 rounded-xl font-medium"
-                    onClick={retake}
-                  >
-                    <RotateCcw size={18} /> Retake Photo
-                  </button>
-                </div>
-              )}
-
-              <canvas ref={canvasRef} className="hidden" />
-            </div>
-
-            {/* Privacy Note */}
-            <div className="mt-6 flex items-start gap-3 max-w-md mx-auto">
-              <span className="icon-badge bg-pink-100 text-pink-400">
-                <ShieldCheck size={18} />
-              </span>
+            {/* Camera Status Card */}
+            <div className="camera-status-card p-5 sm:p-6 flex flex-col justify-between">
               <div>
-                <p className="text-sm font-semibold text-[#2D2D2D]">Your privacy is important to us</p>
-                <p className="text-xs text-textSecondary mt-1">
-                  Your photo is only used to generate your skin analysis and is never shared.
-                </p>
+                <div className="flex items-center gap-2 mb-4">
+                  <ScanFace className="text-[#DE688E]" size={20} strokeWidth={2.2} />
+                  <h2 className="text-sm sm:text-base font-bold text-[#141414]">
+                    Camera Status
+                  </h2>
+                </div>
+
+                <div className="space-y-3.5">
+                  {validationChecksList.map((check) => (
+                    <div key={check.id} className="flex items-start gap-3">
+                      <span
+                        className={`w-4 h-4 rounded-full shrink-0 mt-0.5 transition-colors duration-300 ${getStatusDotColor(
+                          check.status
+                        )}`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs sm:text-sm font-semibold text-[#141414] leading-none">
+                          {check.label}
+                        </p>
+                        {isCameraActive && check.message && (
+                          <p className="text-[11px] text-[#7A7382] mt-0.5 leading-snug truncate">
+                            {check.message}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Progress Footer */}
+              <div className="mt-5 pt-3.5 border-t border-gray-100">
+                <div className="flex items-center justify-between text-xs mb-1.5">
+                  <span className="font-bold text-[#141414]">Progress</span>
+                  <span className="text-[#7A7382]">
+                    {isCameraActive
+                      ? `${passedChecksCount} / ${totalChecks} Checks passed`
+                      : `0 / ${totalChecks} Checks passed`}
+                  </span>
+                </div>
+                <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden p-0.5">
+                  <div
+                    className="bg-gradient-to-r from-[#F9BAC8] to-[#EE8EA3] h-full rounded-full transition-all duration-300"
+                    style={{
+                      width: isCameraActive
+                        ? `${(passedChecksCount / totalChecks) * 100}%`
+                        : "0%",
+                    }}
+                  />
+                </div>
               </div>
             </div>
           </div>
+
+          {/* Privacy Note */}
+          <div className="flex items-start gap-2.5 mt-4 pt-2">
+            <ShieldCheck size={18} className="text-[#141414] shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-[#141414] text-xs">Your privacy is important to us</p>
+              <p className="text-[11px] text-[#7A7382] mt-0.5 leading-relaxed">
+                Your photo is only used to generate your skin analysis and is never shared.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column: Dynamic Analysis / Camera Viewport */}
+        <div className="w-full flex-1 max-w-2xl flex flex-col items-center justify-center">
+          {/* STATE 1: Instructions (Before we Start) */}
+          {flowStep === "instructions" && (
+            <div className="analysis-glass-card w-full p-6 sm:p-8 flex flex-col items-center justify-between text-center min-h-[440px]">
+              <div>
+                <div className="flex justify-center mb-2">
+                  <ScanFace className="text-[#A85175]" size={36} strokeWidth={2} />
+                </div>
+                <h2
+                  className="text-2xl sm:text-3xl font-bold text-[#141414] mb-4"
+                  style={{ fontFamily: "Georgia, serif" }}
+                >
+                  Before we Start
+                </h2>
+
+                <div className="w-full max-w-lg space-y-3 my-4">
+                  <div className="bg-white rounded-2xl p-4 shadow-[0_3px_12px_rgba(0,0,0,0.03)] border border-white/90 flex items-center gap-3.5 text-left text-xs sm:text-sm text-[#2D2D2D] font-medium">
+                    <Sun size={20} className="text-[#A85175] shrink-0" />
+                    <span>Find a well-lit spot, ideally facing a window or light source</span>
+                  </div>
+
+                  <div className="bg-white rounded-2xl p-4 shadow-[0_3px_12px_rgba(0,0,0,0.03)] border border-white/90 flex items-center gap-3.5 text-left text-xs sm:text-sm text-[#2D2D2D] font-medium">
+                    <Glasses size={20} className="text-[#A85175] shrink-0" />
+                    <span>Remove glasses and pull back hair covering your face</span>
+                  </div>
+
+                  <div className="bg-white rounded-2xl p-4 shadow-[0_3px_12px_rgba(0,0,0,0.03)] border border-white/90 flex items-center gap-3.5 text-left text-xs sm:text-sm text-[#2D2D2D] font-medium">
+                    <Meh size={20} className="text-[#A85175] shrink-0" />
+                    <span>Hold your phone at eye level and keep a neutral expression</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="w-full flex flex-col sm:flex-row items-center justify-center gap-3 mt-4">
+                <button
+                  type="button"
+                  onClick={requestCameraAccess}
+                  className="btn btn-rose py-3 px-9 text-sm font-bold rounded-full shadow-[0_8px_24px_rgba(238,142,163,0.4)] cursor-pointer"
+                >
+                  <span>Enable Camera</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="btn btn-white py-3 px-7 text-sm font-semibold rounded-full shadow-sm cursor-pointer inline-flex items-center gap-2"
+                >
+                  <Upload size={16} />
+                  <span>Upload Photo</span>
+                </button>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/jpg,image/png"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+              </div>
+
+              <p className="text-[11px] text-[#7A7382] mt-3">
+                Live camera capture provides real-time guidance. Upload is also available.
+              </p>
+            </div>
+          )}
+
+          {/* STATE 2: Requesting Permission */}
+          {flowStep === "permission" && (
+            <div className="analysis-glass-card w-full p-8 flex flex-col items-center justify-center text-center min-h-[420px]">
+              {!permissionError ? (
+                <>
+                  <Loader2 className="animate-spin text-[#DE688E] mb-4" size={42} />
+                  <h3
+                    className="text-xl font-bold text-[#141414] mb-2"
+                    style={{ fontFamily: "Georgia, serif" }}
+                  >
+                    Requesting Camera Access
+                  </h3>
+                  <p className="text-xs sm:text-sm text-[#6B6375] max-w-sm">
+                    Please allow camera permission in your browser prompt so SkinWise can guide your live face analysis.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-4">
+                    <AlertCircle className="text-red-500" size={32} />
+                  </div>
+                  <h3
+                    className="text-xl font-bold text-[#141414] mb-2"
+                    style={{ fontFamily: "Georgia, serif" }}
+                  >
+                    Camera Access Needed
+                  </h3>
+                  <p className="text-xs sm:text-sm text-[#6B6375] max-w-sm mb-6">
+                    {permissionError}
+                  </p>
+                  <div className="flex flex-col sm:flex-row items-center gap-3">
+                    <button
+                      type="button"
+                      className="btn btn-rose py-2.5 px-6 font-bold text-xs sm:text-sm rounded-full flex items-center gap-2 cursor-pointer"
+                      onClick={requestCameraAccess}
+                    >
+                      <RotateCcw size={16} /> <span>Try Again</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-white py-2.5 px-6 font-semibold text-xs sm:text-sm rounded-full flex items-center gap-2 cursor-pointer"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <Upload size={16} /> <span>Upload Photo Instead</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* STATE 3: Live Camera / Capturing State */}
+          {(flowStep === "live" || flowStep === "capturing") && (
+            <div className="camera-feed-card relative w-full aspect-[4/5] sm:aspect-[4/3] md:aspect-[16/11] max-h-[70vh] flex flex-col justify-between overflow-hidden">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="camera-video"
+                style={{ transform: "scaleX(-1)" }}
+              />
+
+              {/* Guidance Badge Overlay */}
+              <div className="relative z-20 w-full pt-4 flex justify-center pointer-events-none px-4">
+                <span className="bg-black/60 backdrop-blur-md text-white text-[11px] sm:text-xs px-4 py-1.5 rounded-full border border-white/20 shadow-md">
+                  {validation.facePositionGuidance}
+                </span>
+              </div>
+
+              {/* Oval Face Guide Overlay */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+                <div
+                  className={`w-44 h-58 sm:w-60 sm:h-80 md:w-68 md:h-88 oval-face-guide ${
+                    validation.readyForAnalysis ? "ready" : ""
+                  }`}
+                />
+              </div>
+
+              {/* Capturing feedback pulse */}
+              {flowStep === "capturing" && (
+                <div className="absolute inset-0 bg-black/50 z-30 flex items-center justify-center">
+                  <div className="w-16 h-16 rounded-full border-4 border-white/30 animate-ping" />
+                  <div className="absolute w-16 h-16 rounded-full border-4 border-[#F9BAC8]" />
+                </div>
+              )}
+
+              {/* Bottom Control Bar */}
+              <div className="relative z-20 w-full bg-[#A3A3A3]/75 backdrop-blur-md rounded-b-[24px] sm:rounded-b-[36px] py-2.5 sm:py-3.5 px-4 sm:px-6 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={stopCameraAndReturn}
+                  className="w-10 h-10 rounded-full bg-white/25 hover:bg-white/35 text-white flex items-center justify-center transition cursor-pointer"
+                  title="Cancel Camera"
+                >
+                  <ArrowLeft size={18} />
+                </button>
+
+                {/* Centered Shutter Button */}
+                <button
+                  type="button"
+                  disabled={!validation.readyForAnalysis || flowStep === "capturing"}
+                  onClick={captureAndUpload}
+                  className="shutter-outer-ring p-1.5 flex items-center justify-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {flowStep === "capturing" ? (
+                    <Loader2 className="animate-spin text-white" size={28} />
+                  ) : (
+                    <div
+                      className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full transition-transform ${
+                        validation.readyForAnalysis
+                          ? "bg-gradient-to-r from-[#F9BAC8] to-[#EE8EA3] shadow-[0_4px_16px_rgba(238,142,163,0.5)]"
+                          : "bg-gradient-to-r from-[#F9BAC8]/60 to-[#EE8EA3]/60"
+                      }`}
+                    />
+                  )}
+                </button>
+
+                {/* Upload Photo Alternative in Live State */}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-10 h-10 rounded-full bg-white/25 hover:bg-white/35 text-white flex items-center justify-center transition cursor-pointer"
+                  title="Upload Photo Instead"
+                >
+                  <Upload size={18} />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* STATE 4: Review Uploaded Photo */}
+          {flowStep === "upload_preview" && (
+            <div className="analysis-glass-card w-full p-6 sm:p-8 flex flex-col items-center justify-center text-center">
+              <h2
+                className="text-xl sm:text-2xl font-bold text-[#141414] mb-3"
+                style={{ fontFamily: "Georgia, serif" }}
+              >
+                Review Your Photo
+              </h2>
+
+              {uploadedFilePreview && (
+                <div className="relative w-full max-w-sm max-h-[44vh] aspect-[3/4] rounded-2xl overflow-hidden shadow-md border border-white/90 bg-black/5 my-2">
+                  <img
+                    src={uploadedFilePreview}
+                    alt="Uploaded preview"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
+
+              {uploadError && (
+                <p className="text-xs text-red-600 my-2 bg-red-50/80 px-3.5 py-1.5 rounded-xl border border-red-200/60 max-w-sm">
+                  {uploadError}
+                </p>
+              )}
+
+              <div className="flex flex-col sm:flex-row items-center gap-3 w-full max-w-sm mt-3">
+                <button
+                  type="button"
+                  onClick={analyzeUploadedPhoto}
+                  className="btn btn-rose w-full py-2.5 font-bold text-xs sm:text-sm rounded-full flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <ScanFace size={16} /> <span>Analyze Photo</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelUpload}
+                  className="btn btn-white w-full py-2.5 font-semibold text-xs sm:text-sm rounded-full cursor-pointer"
+                >
+                  <span>Cancel</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* STATE 5: Analyzing in Progress */}
+          {flowStep === "uploading" && (
+            <div className="analysis-glass-card w-full p-8 flex flex-col items-center justify-center text-center min-h-[420px]">
+              <Loader2 className="animate-spin text-[#DE688E] mb-4" size={44} />
+              <h3
+                className="text-xl font-bold text-[#141414] mb-2"
+                style={{ fontFamily: "Georgia, serif" }}
+              >
+                Analyzing Your Skin...
+              </h3>
+              <p className="text-xs sm:text-sm text-[#6B6375] max-w-sm">
+                Our AI model is evaluating visible concerns, hydration, and skin characteristics.
+              </p>
+            </div>
+          )}
+
+          {/* STATE 6: Success */}
+          {flowStep === "success" && (
+            <div className="analysis-glass-card w-full p-8 flex flex-col items-center justify-center text-center min-h-[420px]">
+              <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-4">
+                <CheckCircle2 className="text-[#7DBE95]" size={36} />
+              </div>
+              <h2
+                className="text-2xl font-bold text-[#141414] mb-2"
+                style={{ fontFamily: "Georgia, serif" }}
+              >
+                You&apos;re All Set!
+              </h2>
+              <p className="text-xs sm:text-sm text-[#6B6375] max-w-sm mb-6 leading-relaxed">
+                Your skin analysis is complete! We have personalized your recommendations and morning/night routine.
+              </p>
+              <button
+                type="button"
+                className="btn btn-rose py-3 px-8 text-sm font-bold rounded-full shadow-[0_8px_24px_rgba(238,142,163,0.4)] cursor-pointer"
+                onClick={() => router.push("/dashboard")}
+              >
+                <span>Go to Dashboard</span>
+              </button>
+            </div>
+          )}
+
+          {/* STATE 7: Error */}
+          {flowStep === "error" && (
+            <div className="analysis-glass-card w-full p-8 flex flex-col items-center justify-center text-center min-h-[420px]">
+              <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-4">
+                <AlertCircle className="text-red-500" size={36} />
+              </div>
+              <h3
+                className="text-xl font-bold text-[#141414] mb-2"
+                style={{ fontFamily: "Georgia, serif" }}
+              >
+                Analysis Failed
+              </h3>
+              <p className="text-xs sm:text-sm text-[#6B6375] max-w-sm mb-6">
+                {uploadError || "We couldn't analyze your photo. Please try again with good lighting."}
+              </p>
+              <div className="flex flex-col sm:flex-row items-center gap-3">
+                <button
+                  type="button"
+                  className="btn btn-rose py-2.5 px-6 font-bold text-xs sm:text-sm rounded-full flex items-center gap-2 cursor-pointer"
+                  onClick={retake}
+                >
+                  <RotateCcw size={16} /> <span>Try Again</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-white py-2.5 px-6 font-semibold text-xs sm:text-sm rounded-full flex items-center gap-2 cursor-pointer"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload size={16} /> <span>Upload Photo Instead</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          <canvas ref={canvasRef} className="hidden" />
         </div>
       </div>
     </main>

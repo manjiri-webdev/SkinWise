@@ -2,7 +2,17 @@
 // NEXT_PUBLIC_AI_BACKEND_URL should point at your backend, e.g. http://localhost:8000
 // Add it to .env.local: NEXT_PUBLIC_AI_BACKEND_URL=http://localhost:8000
 
-const AI_BACKEND_URL = process.env.NEXT_PUBLIC_AI_BACKEND_URL;
+import { supabase } from "@/lib/supabase";
+
+const AI_BACKEND_URL = process.env.NEXT_PUBLIC_AI_BACKEND_URL || 'http://localhost:8000';
+
+async function getAuthToken(): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error("No authenticated session");
+  }
+  return session.access_token;
+}
 
 export type ValidationStatus = "passed" | "warning" | "failed" | "pending";
 
@@ -18,35 +28,44 @@ export type BackendValidationResponse = {
   validation: {
     brightness: ValidationCheck;
     face_orientation: ValidationCheck;
-    blur?: ValidationCheck;
     face_detection?: ValidationCheck;
     single_face?: ValidationCheck;
   };
+  guidance?: string;
 };
 
 export type UploadValidationResponse = {
   filename: string;
-  image_info: unknown;
-  blur_results: unknown;
-  brightness_result: unknown;
-  detected_face: unknown;
-  face_orientation?: unknown;
+  ready_for_analysis: boolean;
+  validation: {
+    blur: { status: string; message: string };
+    brightness: { status: string; message: string };
+    face_detection: { status: string; message: string };
+    single_face: { status: string; message: string };
+    face_orientation: { status: string; message: string };
+  };
   summary?: unknown;
   severity?: unknown;
   acne_detections?: unknown;
 };
 
-export async function uploadFaceImage(file: File): Promise<UploadValidationResponse> {
+export async function uploadFaceImage(file: File, isFileUpload: boolean = false): Promise<UploadValidationResponse> {
   if (!AI_BACKEND_URL) {
     throw new Error("AI backend URL is not configured. Set NEXT_PUBLIC_AI_BACKEND_URL in .env.local");
   }
 
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("is_file_upload", isFileUpload.toString());
+
+  const token = await getAuthToken();
 
   const response = await fetch(`${AI_BACKEND_URL}/upload`, {
     method: "POST",
     body: formData,
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
   });
 
   if (!response.ok) {
@@ -62,10 +81,10 @@ export function convertBackendValidation(backendResponse: BackendValidationRespo
   singleFace: { id: string; label: string; status: ValidationStatus; message: string };
   brightness: { id: string; label: string; status: ValidationStatus; message: string };
   faceOrientation: { id: string; label: string; status: ValidationStatus; message: string };
-  blur: { id: string; label: string; status: ValidationStatus; message: string };
   readyForAnalysis: boolean;
+  facePositionGuidance?: string;
 } {
-  const { validation, ready_for_analysis } = backendResponse;
+  const { validation, ready_for_analysis, guidance } = backendResponse;
 
   return {
     faceDetected: validation.face_detection ? {
@@ -103,27 +122,17 @@ export function convertBackendValidation(backendResponse: BackendValidationRespo
     },
     faceOrientation: validation.face_orientation ? {
       id: "faceOrientation",
-      label: "Face position",
+      label: "Face orientation",
       status: validation.face_orientation.status,
       message: validation.face_orientation.message
     } : {
       id: "faceOrientation",
-      label: "Face position",
+      label: "Face orientation",
       status: "passed",
-      message: "Face position is good"
+      message: "Face orientation is good"
     },
-    blur: validation.blur ? {
-      id: "blur",
-      label: "Image clarity",
-      status: validation.blur.status,
-      message: validation.blur.message
-    } : {
-      id: "blur",
-      label: "Image clarity",
-      status: "passed",
-      message: "Image clarity is good"
-    },
-    readyForAnalysis: ready_for_analysis
+    readyForAnalysis: ready_for_analysis,
+    facePositionGuidance: guidance || "Keep your face centered in the frame."
   };
 }
 
@@ -133,9 +142,15 @@ export function evaluateUploadResult(result: UploadValidationResponse): {
   passed: boolean;
   reason: string | null;
 } {
-  const blur = result.blur_results as { status?: string; message?: string } | undefined;
-  const brightness = result.brightness_result as { status?: string; message?: string } | undefined;
-  const face = result.detected_face as { status?: string; message?: string } | undefined;
+  const validation = result.validation as {
+    blur?: { status?: string; message?: string };
+    brightness?: { status?: string; message?: string };
+    face_detection?: { status?: string; message?: string };
+  } | undefined;
+  
+  const blur = validation?.blur;
+  const brightness = validation?.brightness;
+  const face = validation?.face_detection;
 
   if (face?.status === "failed") {
     return { passed: false, reason: face.message || "Face detection failed" };
@@ -169,4 +184,4 @@ export async function validateLiveFrame(file: File): Promise<BackendValidationRe
   }
 
   return response.json();
-}
+} 

@@ -1,23 +1,75 @@
-@import "tailwindcss";
-
 @layer components {
-  .glass {
-    @apply rounded-xl bg-white/60 backdrop-blur-md border border-white/30 shadow-md;
+  /* Warm peach card for Product Safety Watchlist */
+  .watchlist-card {
+    background: linear-gradient(145deg, #FFF8F1 0%, #FDF3E7 100%);
+    border: 1px solid rgba(243, 227, 212, 0.85);
+    border-radius: 28px;
+    box-shadow: 0 12px 36px rgba(185, 145, 120, 0.08);
   }
 
-  .btn {
-    @apply rounded-full px-6 py-2 text-sm font-semibold transition;
+  /* Light soft card for Recommendations */
+  .recommendations-card {
+    background: linear-gradient(145deg, #FAF8FB 0%, #F5F1F6 100%);
+    border: 1px solid rgba(238, 232, 240, 0.85);
+    border-radius: 28px;
+    box-shadow: 0 12px 36px rgba(150, 130, 160, 0.06);
   }
 
-  .btn:hover {
-    @apply bg-pink-400;
+  /* Clean white card for Today's Routine */
+  .routine-card {
+    background: #FFFFFF;
+    border: 1px solid rgba(240, 238, 235, 0.95);
+    border-radius: 28px;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.04);
   }
 
-  .btn:disabled {
-    @apply opacity-50 cursor-not-allowed;
+  @media (max-width: 640px) {
+    .watchlist-card,
+    .recommendations-card,
+    .routine-card {
+      border-radius: 20px;
+    }
   }
 
-  .text-textSecondary {
-    color: #6B7280; /* Tailwind gray-500 */
+  /* Soft card for Lifestyle Insights */
+  .lifestyle-insights-card {
+    background: linear-gradient(145deg, #F8F9FA 0%, #F1F3F5 100%);
+    border: 1px solid rgba(220, 220, 225, 0.85);
+    border-radius: 24px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
+  }
+
+  /* Routine Step Card */
+  .routine-step-card {
+    border-radius: 20px;
+    border: 1.5px solid #EFECE6;
+    background: #FFFFFF;
+    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .routine-step-card.completed {
+    background: #EDF5F0;
+    border-color: #B2D8BD;
+  }
+
+  /* Floating Analyze Skin Button */
+  .btn-analyze-floating {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, #DE688E 0%, #BD426B 100%);
+    color: #FFFFFF;
+    border-radius: 20px;
+    box-shadow: 0 12px 32px rgba(189, 66, 107, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .btn-analyze-floating:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 16px 36px rgba(189, 66, 107, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  }
+
+  .btn-analyze-floating:active {
+    transform: translateY(0);
+    box-shadow: 0 6px 18px rgba(189, 66, 107, 0.3);
   }
 }

@@ -1,36 +1,46 @@
 @import "tailwindcss";
 
-.questionnaire-card {
-  width: 100%;
-  height: 100%;
-
-  background-color: aqua;
-
-  -webkit-mask-image: url("/images/blobs/questionnaire-blob.svg");
-  mask-image: url("/images/blobs/questionnaire-blob.svg");
-
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-
-  -webkit-mask-size: 100% 100%;
-  mask-size: 100% 100%;
-
-  -webkit-mask-position: center;
-  mask-position: center;
-}
-
 .ques-card {
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
-  overflow: hidden;
-
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, .45),
-    0 25px 70px rgba(0, 0, 0, .12);
+  width: 100%;
+  max-width: 720px;
+  position: relative;
+  background: linear-gradient(145deg, #E7DDF9 0%, #DCD1F6 100%);
+  border-radius: 36px;
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 24px 60px rgba(140, 115, 185, 0.2), 0 4px 16px rgba(0, 0, 0, 0.03);
 }
 
-.ques-card::before {
-  background: linear-gradient(180deg,
-      rgba(255, 255, 255, .45),
-      rgba(255, 255, 255, .05));
+@media (max-width: 640px) {
+  .ques-card {
+    border-radius: 24px;
+  }
+}
+
+@media (max-width: 380px) {
+  .ques-card {
+    border-radius: 18px;
+  }
+}
+
+/* Slim elegant scrollbar for long form steps */
+.ques-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(180, 155, 220, 0.45) transparent;
+}
+
+.ques-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+
+.ques-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ques-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(180, 155, 220, 0.45);
+  border-radius: 9999px;
+}
+
+.ques-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(180, 155, 220, 0.7);
 }

@@ -1,33 +1,51 @@
 import os
 import uuid
+import cv2
+import numpy as np
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Any, Dict, Optional
+from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Depends, Form
 from pydantic import BaseModel
 
 import config
+import supabase_config
+from auth_utils import get_current_user
 from image_validation.pipeline import run_image_validation
 from routes.validation import router as validation_router
+from routes.personalization import router as personalization_router
+from routes.history import router as history_router
 from detection.detect import detect_acne
 from analysis.acne_summary import summarize_acne
 from analysis.severity import calculate_severity
 
+cors_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+frontend_url = os.getenv("FRONTEND_URL")
+if frontend_url and frontend_url.strip() not in cors_origins:
+    cors_origins.append(frontend_url.strip())
+cors_origins_env = os.getenv("CORS_ORIGINS")
+if cors_origins_env:
+    for origin in cors_origins_env.split(","):
+        origin_clean = origin.strip()
+        if origin_clean and origin_clean not in cors_origins:
+            cors_origins.append(origin_clean)
+
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-    ],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 app.include_router(validation_router)
-
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.include_router(personalization_router)
+app.include_router(history_router)
 
 class UploadResponse(BaseModel):
     filename: str
@@ -42,36 +60,10 @@ class UploadResponse(BaseModel):
 def home():
     return {"message": "Welcome to SkinWise AI Backend!"}
 
-@app.post("/validate-live")
-def validate_live(file: UploadFile = File(...)):
-    if file.content_type not in config.ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail="Only JPEG and PNG images are supported."
-        )
 
-    extension = os.path.splitext(file.filename)[1].lower()
-    filename = f"{uuid.uuid4().hex}{extension}"
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-
-    with open(file_path, "wb") as buffer:
-        buffer.write(file.file.read())
-
-    try:
-        validation = run_image_validation(file_path)
-        print(validation)
-        
-        return {
-        "ready_for_analysis": validation["ready_for_analysis"],
-        "validation": validation,
-        }
-
-    finally:
-        if os.path.exists(file_path):
-            os.remove(file_path)
 
 @app.post("/upload", response_model=UploadResponse)
-def upload_image(file: UploadFile = File(...)):
+def upload_image(file: UploadFile = File(...), user_id: str = Depends(get_current_user), is_file_upload: bool = Form(False)):
     if file.content_type not in config.ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=400, detail="Only JPEG and PNG images are supported.")
 
@@ -79,34 +71,54 @@ def upload_image(file: UploadFile = File(...)):
     if len(file_bytes) > config.MAX_UPLOAD_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="Image exceeds the 8MB size limit.")
 
-    extension = os.path.splitext(file.filename)[1].lower()
-    safe_filename = f"{uuid.uuid4().hex}{extension}"
-    file_path = os.path.join(UPLOAD_FOLDER, safe_filename)
+    # Strictly in-memory image processing for privacy compliance (zero persistent image storage)
+    nparr = np.frombuffer(file_bytes, np.uint8)
+    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if image is None:
+        raise HTTPException(status_code=400, detail="Unable to decode image. Unsupported format or corrupt data.")
 
-    with open(file_path, "wb") as buffer:
-        buffer.write(file_bytes)
+    validation = run_image_validation(image, skip_position_check=is_file_upload)
 
-    try:
-        validation = run_image_validation(file_path)
-
-        if not validation["ready_for_analysis"]:
-            return UploadResponse(
-                filename=safe_filename,
-                ready_for_analysis=False,
-                validation=validation,
-            )
-
-        acne_detections = detect_acne(file_path)
-        summary = summarize_acne(acne_detections)
-        severity = calculate_severity(summary)
-
+    if not validation["ready_for_analysis"]:
         return UploadResponse(
-            filename=safe_filename,
-            ready_for_analysis=True,
+            filename=file.filename or "image.jpg",
+            ready_for_analysis=False,
             validation=validation,
-            summary=summary,
-            severity=severity,
-            acne_detections=acne_detections,
         )
-    finally:
-        pass
+
+    acne_detections = detect_acne(image)
+    summary = summarize_acne(acne_detections)
+    severity = calculate_severity(summary)
+
+    # Persist analysis results to Supabase (numerical/structured metrics only; zero image persistence)
+    try:
+        analysis_record = {
+            "user_id": user_id,
+            "created_at": datetime.utcnow().isoformat(),
+            "model_name": "YOLO",
+            "model_version": "v1",
+            "blackheads": summary["blackheads"],
+            "whiteheads": summary["whiteheads"],
+            "papules": summary["papules"],
+            "pustules": summary["pustules"],
+            "nodules": summary["nodules"],
+            "dark_spots": summary["dark_spots"],  # Already converted from "dark spot" in summarize_acne
+            "total_lesions": summary["total_lesions"],
+            "severity": severity["level"],
+            "severity_score": severity["score"],
+            "detections_json": acne_detections
+        }
+        
+        supabase_config.supabase.table("skin_analyses").insert(analysis_record).execute()
+    except Exception as db_error:
+        print(f"Failed to persist analysis results: {str(db_error)}")
+        # Continue without failing the upload if database insert fails
+
+    return UploadResponse(
+        filename=file.filename or "image.jpg",
+        ready_for_analysis=True,
+        validation=validation,
+        summary=summary,
+        severity=severity,
+        acne_detections=acne_detections,
+    )

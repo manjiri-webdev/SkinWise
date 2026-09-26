@@ -1,18 +1,24 @@
 from typing import Dict, Optional
 import re
 
+# Research/explanatory sites that MUST NOT be used as product sources
+# These sites are for ingredient research only, not canonical product data
+RESEARCH_SITES_BLOCKLIST = [
+    r"incidecoder\.com",
+    r"incidecoder\.co",
+    r"incidecoder\.in",
+    r"cosdna\.com",
+    r"ewg\.org",
+    r"ewg\.org/skindeep",
+    r"skinvasion\.com",
+    r"cosmeticingredientreview\.com",
+]
+
 # Trusted source patterns and their priorities (lower = higher priority)
+# Only official brand sites and legitimate product retailers should be here
 TRUSTED_SOURCES = {
     r"openbeautyfacts\.org": 1,
     r"world\.openbeautyfacts\.org": 1,
-    r"incidecoder\.com": 2,
-    r"incidecoder\.co": 2,
-    r"incidecoder\.in": 2,
-    r"skinvasion\.com": 3,
-    r"cosdna\.com": 4,
-    r"cosmeticingredientreview\.com": 5,
-    r"ewg\.org": 6,
-    r"ewg\.org/skindeep": 6,
 }
 
 # Retailer patterns to filter out
@@ -42,7 +48,12 @@ def get_source_priority(url: str) -> int:
     """
     url_lower = url.lower()
     
-    # Check if it's a retailer (lower priority)
+    # BLOCK research/explanatory sites - these must never be product sources
+    for pattern in RESEARCH_SITES_BLOCKLIST:
+        if re.search(pattern, url_lower):
+            return 999  # Block research sites entirely
+    
+    # Check if it's a retailer (lower priority than official sites)
     for pattern in RETAILER_PATTERNS:
         if re.search(pattern, url_lower):
             return 50  # Low priority for retailers
@@ -52,7 +63,7 @@ def get_source_priority(url: str) -> int:
         if re.search(pattern, url_lower):
             return priority
     
-    # Default priority for unknown sources
+    # Default priority for unknown sources (assume official brand site)
     return 20
 
 def get_source_name(url: str) -> str:
@@ -82,6 +93,23 @@ def get_source_name(url: str) -> str:
         return domain.split(".")[0].capitalize()
     except:
         return "Unknown"
+
+def is_research_site(url: str) -> bool:
+    """
+    Check if URL is from a research/explanatory site that must not be used as product source.
+    
+    Args:
+        url: The URL to check
+        
+    Returns:
+        True if research site (blocked), False otherwise
+    """
+    url_lower = url.lower()
+    for pattern in RESEARCH_SITES_BLOCKLIST:
+        if re.search(pattern, url_lower):
+            return True
+    
+    return False
 
 def is_retailer_source(url: str) -> bool:
     """
@@ -134,4 +162,4 @@ def is_official_brand_site(url: str, brand: str) -> bool:
     except:
         return False
     
-    return False
+    return False    

@@ -23,6 +23,7 @@ ORIENTATION_WARNING_THRESHOLD = 0.06
 
 # Detection confidence
 MIN_FACE_DETECTION_CONFIDENCE = 0.8
+YOLO_CONFIDENCE_THRESHOLD = 0.10
 
 # Upload constraints
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png"}

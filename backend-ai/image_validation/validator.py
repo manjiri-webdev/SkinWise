@@ -10,9 +10,13 @@ from image_validation.face_orientation import detect_face_orientation
 def validate_blur(image) -> Dict[str, Any]:
     blur_score = calculate_blur(image)
 
-    if blur_score < config.BLUR_FAIL_THRESHOLD:
+    # More lenient blur threshold for live validation (30 → 15)
+    live_fail_threshold = 15
+    live_warning_threshold = 25
+
+    if blur_score < live_fail_threshold:
         return {"status": "failed", "message": "Image is too blurry. Please hold steady and improve focus.", "blur_score": blur_score}
-    if blur_score < config.BLUR_WARNING_THRESHOLD:
+    if blur_score < live_warning_threshold:
         return {"status": "warning", "message": "Image is slightly blurry. Results may be less accurate.", "blur_score": blur_score}
     return {"status": "passed", "message": "Image quality is good.", "blur_score": blur_score}
 
@@ -47,8 +51,12 @@ def validate_face_position(face_data: Dict[str, Any]) -> Dict[str, Any]:
     center_x = ((bbox["x1"] + bbox["x2"]) / 2) / face_data["image_width"]
     center_y = ((bbox["y1"] + bbox["y2"]) / 2) / face_data["image_height"]
 
-    if not (config.FACE_POSITION_MIN <= center_x <= config.FACE_POSITION_MAX and
-            config.FACE_POSITION_MIN <= center_y <= config.FACE_POSITION_MAX):
+    # More lenient face position threshold (30%-70% → 20%-80%)
+    position_min = 0.20
+    position_max = 0.80
+
+    if not (position_min <= center_x <= position_max and
+            position_min <= center_y <= position_max):
         return {"status": "failed", "face_position": "off_center", "message": "Please center your face in the camera."}
 
     return {"status": "passed", "face_position": "center", "message": "Face is well centered."}
@@ -58,32 +66,30 @@ def validate_face(image) -> Dict[str, Any]:
     face_data = detect_faces(image)
 
     if not face_data["face_detected"]:
-        return {"status": "failed", "message": "No face detected. Please ensure your face is visible in the camera."}
+        return {"status": "failed", "message": "No face detected. Please ensure your face is visible in the camera.", "face_data": face_data}
 
     if face_data["face_count"] > 1:
-        return {"status": "failed", "message": "Multiple faces detected. Please ensure only one person is visible."}
+        return {"status": "failed", "message": "Multiple faces detected. Please ensure only one person is visible.", "face_data": face_data}
 
     # Check detection confidence
     if face_data["confidence"] < config.MIN_FACE_DETECTION_CONFIDENCE:
-        return {"status": "failed", "message": "Face detection confidence is too low. Please move closer to the camera or improve lighting."}
+        return {"status": "failed", "message": "Face detection confidence is too low. Please move closer to the camera or improve lighting.", "face_data": face_data}
 
     # Check face size
     size_validation = validate_face_size(face_data)
     if size_validation["status"] == "failed":
-        return {"status": "failed", "message": size_validation["message"]}
+        return {"status": "failed", "message": size_validation["message"], "face_data": face_data}
 
-    # Check face position
-    position_validation = validate_face_position(face_data)
-    if position_validation["status"] == "warning":
-        return {"status": "failed", "message": position_validation["message"]}
+    # Face position is guidance only, not a gating check - removed validate_face_position call
+    # It's handled as guidance text in the frontend
 
     return {
         "status": "passed",
         "message": "Face detected successfully.",
         "face_count": face_data["face_count"],
         "face_size": size_validation,
-        "face_position": position_validation,
         "confidence": face_data["confidence"],
+        "face_data": face_data,  # Include face_data to avoid duplicate detection
     }
 
 

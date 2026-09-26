@@ -18,13 +18,17 @@ frontend/.env.test.local
 # ===================================================
 
 backend-ai/venv/
+backend-ai/ingredient-service/.venv/
+.venv/
+**/.venv/
 backend-ai/__pycache__/
 backend-ai/uploads/
 backend-ai/.env
-
-backend-ai/.pytest_cache/
-backend-ai/build/
-backend-ai/dist/
+backend-ai/ingredient-service/.env
+.env
+.env*
+**/.env
+**/.env*
 
 *.py[cod]
 

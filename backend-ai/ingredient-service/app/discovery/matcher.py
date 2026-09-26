@@ -1,6 +1,7 @@
 from typing import List, Dict, Optional, Set
 from app.ingredients.service import normalize_name
-from app.discovery.source_selector import get_source_priority, get_source_name, is_official_brand_site, is_retailer_source
+from app.discovery.source_selector import get_source_priority, get_source_name, is_official_brand_site, is_retailer_source, is_research_site
+from urllib.parse import urlparse
 import re
 
 # Common brand name patterns and their normalized forms
@@ -115,7 +116,7 @@ def deduplicate_by_product_identity(results: List[Dict]) -> List[Dict]:
                 # Prefer official brand site
                 0 if "official brand site" in x.get("match_reason", "") else 1,
                 # Prefer results with images
-                0 if x.get("image_url") else 1,
+                0 if x.get("image") else 1,
                 # Prefer shorter, cleaner names
                 len(x["product_name"])
             ))
@@ -309,7 +310,20 @@ def calculate_match_score(
     cleaned_title = clean_product_name(title)
     
     # Calculate product name similarity using cleaned title
-    product_similarity = calculate_string_similarity(query_product_name, cleaned_title)
+    product_similarity = calculate_string_similarity(
+    query_product_name,
+    cleaned_title
+    )
+
+    query_tokens = set(normalize_name(query_product_name).split())
+    title_tokens = set(normalize_name(cleaned_title).split())
+
+    if query_tokens:
+        query_coverage = len(query_tokens.intersection(title_tokens)) / len(query_tokens)
+    else:
+        query_coverage = 0.0
+
+    product_similarity = max(product_similarity, query_coverage)
     
     # Brand matching - much stricter when brand is provided
     brand_score = 0.0
@@ -433,18 +447,17 @@ def rank_and_filter_results(
     other_results = []
     
     for result in search_results:
+        url = result.get("url", "")
+        
+        # BLOCK research sites entirely - they must never be product sources
+        if is_research_site(url):
+            print(f"BLOCKED research site from product discovery: {url}")
+            continue
+        
         if result.get("is_official", False):
             official_results.append(result)
         else:
             other_results.append(result)
-    
-    # If we have official brand site results, prioritize those
-    if official_results:
-        print(f"Using {len(official_results)} official brand site results")
-        search_results = official_results
-    else:
-        print(f"No official brand site results, using {len(other_results)} general results")
-        search_results = other_results
     
     # Build known brands set from query and results
     known_brands = set()
@@ -457,14 +470,88 @@ def rank_and_filter_results(
         if extracted_brand:
             known_brands.add(extracted_brand)
     
-    # Calculate match scores for all results
-    scored_results = []
+    # First, process official results to see if any are relevant
+    relevant_official_results = []
+    if official_results:
+        for result in official_results:
+            # Skip UAT/staging domains
+            url = result.get("url", "").lower()
+            if "uat" in url or "staging" in url or "test" in url:
+                continue
+            
+            match_info = calculate_match_score(result, query_product_name, query_brand, known_brands)
+            
+            print(
+                "OFFICIAL MATCH:",
+                result.get("title"),
+                "| URL:",
+                result.get("url"),
+                "| SCORE:",
+                match_info["match_score"],
+                "| REASON:",
+                match_info["match_reason"]
+            )
+            # Higher threshold for official site results to ensure genuine matches
+            if match_info["match_score"] >= 0.25:
+                relevant_official_results.append({
+                    "result": result,
+                    "match_info": match_info
+                })
     
-    for result in search_results:
-        match_info = calculate_match_score(result, query_product_name, query_brand, known_brands)
+    # If we have relevant official results, use only those
+    if relevant_official_results:
+        print(f"Using {len(relevant_official_results)} relevant official brand site results")
+        # Use pre-calculated match info for official results
+        scored_results = []
+        for item in relevant_official_results:
+            result = item["result"]
+            match_info = item["match_info"]
+            
+            # Skip non-product pages and duplicates for official results
+            skip_patterns = [
+                "buy", "shop", "collection", "catalog", "all products",
+                "online at best price", "benefits", "blogs", "bundle",
+                "combo", "trio", "pack of",
+                "combo pack", "value pack", "gift set",
+                "which one is better", "vs.", "versus",
+                "homepage", "about us"
+            ]
+
+            url_lower = result.get("url", "").lower()
+            result_lower = normalize_name(match_info["extracted_product_name"]).lower()
+            
+            # Skip blogs and homepage by URL pattern
+            if "/blogs/" in url_lower:
+                continue
+            
+            # Skip homepage (domain with no path)
+            parsed = urlparse(result.get("url", ""))
+            if not parsed.path or parsed.path == "/":
+                continue
+            
+            if any(pattern in result_lower for pattern in skip_patterns):
+                continue  # Skip generic pages and bundles
+            
+            # Check for duplicate product identities
+            product_identity = normalize_product_identity(match_info["extracted_product_name"])
+            if not product_identity:
+                continue
+            
+            scored_results.append({
+                "brand": match_info["extracted_brand"] or "Unknown",
+                "product_name": match_info["extracted_product_name"],
+                "source_name": get_source_name(result["url"]),
+                "source_url": result["url"],
+                "image_url": result.get("image", None),
+                "match_reason": match_info["match_reason"],
+                "_match_score": match_info["match_score"]  # Internal use for sorting
+            })
+    else:
+        print(f"No relevant official brand site results, using {len(other_results)} general results")
+        search_results = other_results
         
-        # Minimum threshold for relevance (lower for official site results)
-        min_threshold = 0.2 if official_results else 0.3
+        # Calculate match scores for all results
+        scored_results = []
         
         # Check if query contains specific product type (e.g., "moisturizer", "serum", "sunscreen")
         # and filter results accordingly
@@ -476,41 +563,51 @@ def rank_and_filter_results(
                 query_product_type = ptype
                 break
         
-        if query_product_type:
-            # Check if result contains the product type or a variant
-            result_lower = normalize_name(match_info["extracted_product_name"]).lower()
-            # Be more lenient - check for partial matches or related terms
-            type_variants = {
-                "sunscreen": ["sunscreen", "spf", "uv", "sun"],
-                "moisturizer": ["moisturizer", "cream", "lotion", "hydration"],
-                "serum": ["serum", "concentrate", "elixir"],
-                "face wash": ["face wash", "cleanser", "cleanse"],
-            }
+        for result in search_results:
+            match_info = calculate_match_score(result, query_product_name, query_brand, known_brands)
             
-            if query_product_type in type_variants:
-                matched = any(variant in result_lower for variant in type_variants[query_product_type])
-                if not matched:
-                    continue  # Skip if result doesn't match the product type
-            else:
-                if query_product_type not in result_lower:
-                    continue  # Skip if result doesn't match the product type
-        
-        # Skip brand homepage and collection pages
-        skip_patterns = ["buy", "shop", "collection", "catalog", "all products", "online at best price", "sunscreens", "products", "benefits", "blogs"]
-        result_lower = normalize_name(match_info["extracted_product_name"]).lower()
-        if any(pattern in result_lower for pattern in skip_patterns):
-            continue  # Skip generic pages
-        
-        if match_info["match_score"] >= min_threshold:
-            scored_results.append({
-                "brand": match_info["extracted_brand"] or "Unknown",
-                "product_name": match_info["extracted_product_name"],
-                "source_name": get_source_name(result["url"]),
-                "source_url": result["url"],
-                "image_url": result.get("image", None),
-                "match_reason": match_info["match_reason"],
-                "_match_score": match_info["match_score"]  # Internal use for sorting
-            })
+            # Minimum threshold for relevance
+            min_threshold = 0.3
+            
+            if query_product_type:
+                # Check if result contains the product type or a variant
+                result_lower = normalize_name(match_info["extracted_product_name"]).lower()
+                # Be more lenient - check for partial matches or related terms
+                type_variants = {
+                    "sunscreen": ["sunscreen", "spf", "uv", "sun"],
+                    "moisturizer": ["moisturizer", "cream", "lotion", "hydration"],
+                    "serum": ["serum", "concentrate", "elixir"],
+                    "face wash": ["face wash", "cleanser", "cleanse"],
+                }
+                
+                if query_product_type in type_variants:
+                    matched = any(variant in result_lower for variant in type_variants[query_product_type])
+                    if not matched:
+                        continue  # Skip if result doesn't match the product type
+                else:
+                    if query_product_type not in result_lower:
+                        continue  # Skip if result doesn't match the product type
+            
+            # Skip brand homepage, collection pages, and bundles
+            skip_patterns = [
+                "buy", "shop", "collection", "catalog", "all products", "online at best price", 
+                "sunscreens", "products", "benefits", "blogs", "bundle", "combo", "trio", 
+                "set", "kit", "pack of", "combo pack", "value pack", "gift set"
+            ]
+            result_lower = normalize_name(match_info["extracted_product_name"]).lower()
+            if any(pattern in result_lower for pattern in skip_patterns):
+                continue  # Skip generic pages and bundles
+            
+            if match_info["match_score"] >= min_threshold:
+                scored_results.append({
+                    "brand": match_info["extracted_brand"] or "Unknown",
+                    "product_name": match_info["extracted_product_name"],
+                    "source_name": get_source_name(result["url"]),
+                    "source_url": result["url"],
+                    "image_url": result.get("image", None),
+                    "match_reason": match_info["match_reason"],
+                    "_match_score": match_info["match_score"]  # Internal use for sorting
+                })
     
     # Remove duplicates based on URL
     seen_urls = set()

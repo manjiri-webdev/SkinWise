@@ -20,6 +20,57 @@ def normalize_name(value: str) -> str:
 
     return value
 
+def normalize_ingredient_for_lookup(ingredient: str) -> str:
+    """
+    Normalize ingredient name for database lookup only.
+    Preserves original ingredient string for output/storage.
+    
+    Handles known variants and standard formatting:
+    - Unicode dashes, whitespace, slash spacing, harmless punctuation
+    - Known ingredient variants (CAPRYLIC/CAPRIC TRI-GLYCERIDE, etc.)
+    
+    Args:
+        ingredient: Original ingredient string
+        
+    Returns:
+        Normalized string for lookup only
+    """
+    if not ingredient:
+        return ""
+    
+    # Start with basic normalization
+    normalized = normalize_name(ingredient)
+    
+    # Known variant mappings
+    variant_mappings = {
+        "caprylic/capric tri-glyceride": "caprylic/capric triglyceride",
+        "caprylic/capric triglycerides": "caprylic/capric triglyceride",
+        "aqua": "water",
+        "simmondsia chinensis seed oil": "jojoba oil",
+        "borago officinalis seed oil": "borage seed oil",
+        "paraffinum liquidum": "mineral oil",
+        "ceramide iii": "ceramide np",
+        "ceramide 3": "ceramide np",
+        "ceramide i": "ceramide np",
+        "ceramide 1": "ceramide np",
+    }
+    
+    # Check for exact variant match
+    if normalized in variant_mappings:
+        return variant_mappings[normalized]
+    
+    # Handle ceramide np with parentheses (e.g., "ceramide np (xyz)")
+    if normalized.startswith("ceramide np"):
+        return "ceramide np"
+    
+    # Normalize slash spacing (e.g., "CAPRYLIC/ CAPRIC" -> "caprylic/capric")
+    normalized = re.sub(r'/\s+', '/', normalized)
+    
+    # Normalize multiple spaces to single space
+    normalized = re.sub(r'\s+', ' ', normalized)
+    
+    return normalized
+
 def split_aliases(aliases):
     if not aliases:
         return []
@@ -44,7 +95,18 @@ def split_aliases(aliases):
 
 
 def find_ingredient(ingredient: str):
-    search_name = normalize_name(ingredient)
+    """
+    Find ingredient in database using normalization layer for lookup.
+    Preserves original ingredient string for output/storage.
+    
+    Args:
+        ingredient: Original ingredient string
+        
+    Returns:
+        Dictionary with found status, match method, and data
+    """
+    # Use normalization layer for lookup only
+    search_name = normalize_ingredient_for_lookup(ingredient)
 
     response = (
         supabase
@@ -55,9 +117,9 @@ def find_ingredient(ingredient: str):
 
     ingredients = response.data or []
 
-    #Match ingredient column (exact match)
+    #Match ingredient column (exact match using normalized lookup)
     for record in ingredients:
-        database_name = normalize_name(
+        database_name = normalize_ingredient_for_lookup(
             record.get("ingredient")
         )
 
@@ -66,13 +128,13 @@ def find_ingredient(ingredient: str):
             return {
                 "found": True,
                 "matched_by": "ingredient",
-                "matched_name": record.get("ingredient"),
+                "matched_name": record.get("ingredient"),  # Return original DB name
                 "data": record
             }
 
-    #Match canonical_name column (exact match)
+    #Match canonical_name column (exact match using normalized lookup)
     for record in ingredients:
-        canonical_name = normalize_name(
+        canonical_name = normalize_ingredient_for_lookup(
             record.get("canonical_name")
         )
 
@@ -81,66 +143,22 @@ def find_ingredient(ingredient: str):
             return {
                 "found": True,
                 "matched_by": "canonical_name",
-                "matched_name": record.get("canonical_name"),
+                "matched_name": record.get("canonical_name"),  # Return original DB name
                 "data": record
             }
 
-    #Match aliases column (exact match)
+    #Match aliases column (exact match using normalized lookup)
     for record in ingredients:
         aliases = split_aliases(
             record.get("aliases")
         )
 
         for alias in aliases:
-            if normalize_name(alias) == search_name:
+            if normalize_ingredient_for_lookup(alias) == search_name:
                 return {
                     "found": True,
                     "matched_by": "alias",
-                    "matched_name": alias,
-                    "data": record
-                }
-
-    #Match ingredient column (partial)
-    for record in ingredients:
-        database_name = normalize_name(
-            record.get("ingredient")
-        )
-
-        if search_name in database_name or database_name in search_name:
-            return {
-                "found": True,
-                "matched_by": "ingredient_partial",
-                "matched_name": record.get("ingredient"),
-                "data": record
-            }
-
-    #Match canonical_name column (partial)
-    for record in ingredients:
-        canonical_name = normalize_name(
-            record.get("canonical_name")
-        )
-
-        if canonical_name and (search_name in canonical_name or canonical_name in search_name):
-            return {
-                "found": True,
-                "matched_by": "canonical_name_partial",
-                "matched_name": record.get("canonical_name"),
-                "data": record
-            }
-
-    #Match aliases column (partial)
-    for record in ingredients:
-        aliases = split_aliases(
-            record.get("aliases")
-        )
-
-        for alias in aliases:
-            alias_normalized = normalize_name(alias)
-            if search_name in alias_normalized or alias_normalized in search_name:
-                return {
-                    "found": True,
-                    "matched_by": "alias_partial",
-                    "matched_name": alias,
+                    "matched_name": alias,  # Return original alias
                     "data": record
                 }
 

@@ -1,6 +1,8 @@
+from pathlib import Path
 from ultralytics import YOLO
 
-MODEL_PATH = "models/yolo/best.pt"
+BASE_DIR = Path(__file__).resolve().parent.parent
+MODEL_PATH = str(BASE_DIR / "models" / "yolo" / "best.pt")
 
 
 def load_yolo():

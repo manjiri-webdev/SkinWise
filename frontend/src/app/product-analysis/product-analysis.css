@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+@layer components {
+  /* Main cards matching Figma */
+  .analysis-card {
+    background: #FFFFFF;
+    border-radius: 28px;
+    border: 1px solid rgba(240, 238, 235, 0.95);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.04);
+  }
+
+  @media (max-width: 640px) {
+    .analysis-card {
+      border-radius: 20px;
+    }
+  }
+
+  /* Ingredient row styling */
+  .analysis-ingredient-row {
+    border-bottom: 1px solid #F3F1ED;
+    transition: background 0.15s ease;
+  }
+
+  .analysis-ingredient-row:last-child {
+    border-bottom: none;
+  }
+
+  .analysis-ingredient-row:hover {
+    background: #FAF8F5;
+  }
+
+  /* Floating Analyze Skin Button */
+  .btn-analyze-floating {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, #DE688E 0%, #BD426B 100%);
+    color: #FFFFFF;
+    border-radius: 20px;
+    box-shadow: 0 12px 32px rgba(189, 66, 107, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .btn-analyze-floating:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 16px 36px rgba(189, 66, 107, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  }
+
+  .btn-analyze-floating:active {
+    transform: translateY(0);
+    box-shadow: 0 6px 18px rgba(189, 66, 107, 0.3);
+  }
+}

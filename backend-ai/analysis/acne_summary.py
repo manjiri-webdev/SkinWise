@@ -7,11 +7,11 @@ def summarize_acne(detections):
         counter[d["class_name"]] += 1
 
     return {
-        "blackheads": counter["blackheads"],
-        "whiteheads": counter["whiteheads"],
-        "papules": counter["papules"],
-        "pustules": counter["pustules"],
-        "nodules": counter["nodules"],
-        "dark_spots": counter["dark spot"],
+        "blackheads": counter.get("blackheads", 0),
+        "whiteheads": counter.get("whiteheads", 0),
+        "papules": counter.get("papules", 0),
+        "pustules": counter.get("pustules", 0),
+        "nodules": counter.get("nodules", 0),
+        "dark_spots": counter.get("dark spot", 0) + counter.get("dark_spots", 0) + counter.get("dark spots", 0),
         "total_lesions": len(detections)
     }

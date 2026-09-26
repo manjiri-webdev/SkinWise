@@ -14,6 +14,14 @@ export const morningRoutine= ["Cleanser", "Moisturizer", "Sunscreen", "Vitamin C
 export const nightRoutine = ["Cleanser", "Moisturizer", "Serum", "Retinol", "Sleeping Mask", "Nothing"];
 export const currentProductTypes = [ "Cleanser", "Face Wash", "Moisturizer", "Serum", "Sunscreen", "Toner", "Face Mask", "Eye Cream", "Lip Care", "Spot Treatment", "Face Oil", "Other",];
 
+export const reactionOptions = [
+  { value: "none", label: "No reaction" },
+  { value: "mild", label: "Mild reaction" },
+  { value: "moderate", label: "Moderate reaction" },
+  { value: "severe", label: "Severe reaction" },
+  { value: "not_sure", label: "Not sure / too early to tell" },
+];
+
 export const goals = [
   "Reduce Acne", "Control Oil", "Hydrate Skin", "Reduce Pigmentation", "Brighten Skin", "Reduce Dark Spots","Anti-Aging", "Strengthen Skin Barrier", "Even Skin Tone", "Not Sure",
 ];

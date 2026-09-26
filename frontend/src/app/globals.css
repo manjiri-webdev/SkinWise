@@ -77,6 +77,38 @@
             0 0 0 3px rgba(217, 133, 169, .45);
     }
 
+    .btn-rose {
+        background: linear-gradient(90deg, #F9BAC8 0%, #EE8EA3 100%) !important;
+        border: 1px solid rgba(255, 255, 255, 0.7) !important;
+        box-shadow:
+            0 8px 24px rgba(238, 142, 163, 0.38),
+            inset 0 1px 1px rgba(255, 255, 255, 0.8) !important;
+        color: #141414 !important;
+    }
+
+    .btn-rose:hover {
+        background: linear-gradient(90deg, #F4A9B9 0%, #DE7E93 100%) !important;
+        box-shadow:
+            0 12px 30px rgba(238, 142, 163, 0.48),
+            inset 0 1px 1px rgba(255, 255, 255, 0.9) !important;
+    }
+
+    .btn-white {
+        background: linear-gradient(180deg, #FFFFFF 0%, #F0ECF5 100%) !important;
+        border: 1.5px solid rgba(255, 255, 255, 0.9) !important;
+        box-shadow:
+            0 6px 18px rgba(0, 0, 0, 0.06),
+            inset 0 1px 1px rgba(255, 255, 255, 0.95) !important;
+        color: #141414 !important;
+    }
+
+    .btn-white:hover {
+        background: linear-gradient(180deg, #FFFFFF 0%, #E8E2F0 100%) !important;
+        box-shadow:
+            0 8px 22px rgba(0, 0, 0, 0.09),
+            inset 0 1px 1px rgba(255, 255, 255, 1) !important;
+    }
+
     .btn::before {
         content: "";
         position: absolute;
@@ -96,6 +128,11 @@
         backdrop-filter: blur(1px);
         -webkit-backdrop-filter: blur(1px);
         pointer-events: none;
+    }
+
+    .btn > * {
+        position: relative;
+        z-index: 2;
     }
 
     .btn-icon {
@@ -199,48 +236,80 @@
 
     }
 
+    .auth-card {
+        width: 100%;
+        max-width: 440px;
+        position: relative;
+        background: linear-gradient(145deg, rgba(238, 232, 248, 0.78), rgba(228, 220, 244, 0.68));
+        backdrop-filter: blur(28px);
+        -webkit-backdrop-filter: blur(28px);
+        border-radius: 36px;
+        border: 1.5px solid rgba(255, 255, 255, 0.85);
+        box-shadow: 0 24px 60px rgba(185, 160, 205, 0.22), 0 4px 16px rgba(0, 0, 0, 0.05);
+        padding: 36px 32px;
+    }
+
+    @media (max-width: 640px) {
+        .auth-card {
+            padding: 26px 20px;
+            border-radius: 24px;
+        }
+    }
+
+    @media (max-width: 380px) {
+        .auth-card {
+            padding: 20px 14px;
+            border-radius: 20px;
+        }
+    }
+
+    .ques-card {
+        width: 100%;
+        max-width: 720px;
+        position: relative;
+        background: linear-gradient(145deg, rgba(235, 229, 248, 0.82), rgba(226, 218, 245, 0.72));
+        backdrop-filter: blur(28px);
+        -webkit-backdrop-filter: blur(28px);
+        border-radius: 36px;
+        border: 1.5px solid rgba(255, 255, 255, 0.85);
+        box-shadow: 0 24px 60px rgba(180, 155, 205, 0.22), 0 4px 16px rgba(0, 0, 0, 0.04);
+    }
+
+    @media (max-width: 640px) {
+        .ques-card {
+            border-radius: 24px;
+            padding: 20px 16px;
+        }
+    }
+
+    @media (max-width: 380px) {
+        .ques-card {
+            border-radius: 20px;
+            padding: 16px 12px;
+        }
+    }
+
     .blob-wrapper {
-        filter: drop-shadow(0 30px 70px rgba(0, 0, 0, .16));
+        filter: drop-shadow(0 20px 40px rgba(0, 0, 0, 0.1));
     }
 
     .blob-card {
-        width: clamp(300px, 88vw, 500px);
-        height: clamp(450px, 110vw, 520px);
+        width: 100%;
+        max-width: 440px;
         position: relative;
-        background: rgba(255, 255, 255, .22);
-
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.55), rgba(246, 238, 248, 0.45));
         backdrop-filter: blur(28px);
         -webkit-backdrop-filter: blur(28px);
+        border-radius: 32px;
+        border: 1px solid rgba(255, 255, 255, 0.75);
+        box-shadow: 0 20px 50px rgba(180, 140, 160, 0.18), 0 4px 16px rgba(0, 0, 0, 0.05);
         overflow: hidden;
-
-        -webkit-mask: url("/images/blobs/login-blob.svg") center/100% 100% no-repeat;
-        mask: url("/images/blobs/login-blob.svg") center/100% 100% no-repeat;
-        -webkit-mask-repeat: no-repeat;
-        mask-repeat: no-repeat;
-        -webkit-mask-size: 100% 100%;
-        mask-size: 100% 100%;
-        -webkit-mask-position: center;
-        mask-position: center;
-
-        box-shadow:
-            inset 0 0 0 1px rgba(255, 255, 255, .45),
-            0 25px 70px rgba(0, 0, 0, .12);
-    }
-
-    .blob-card::before {
-        content: "";
-        position: absolute;
-        inset: 2px;
-        background: linear-gradient(180deg,
-                rgba(255, 255, 255, .45),
-                rgba(255, 255, 255, .05));
-        pointer-events: none;
     }
 
     .blob-content {
         width: 100%;
         height: 100%;
-        padding: 0;
+        padding: 32px 28px;
         display: flex;
         flex-direction: column;
         justify-content: center;
@@ -250,12 +319,11 @@
     .blob-inner {
         width: 100%;
         max-width: 380px;
-        padding: 70px 24px;
     }
 
     @media (max-width: 480px) {
         .blob-inner {
-            padding: 40px 20px;
+            padding: 10px;
         }
     }
 
