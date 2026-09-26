@@ -85,3 +85,4 @@ wheel==0.47.0
 wrapt==2.2.2
 PyJWT==2.14.0
 ultralytics==8.4.115
+supabase==2.31.0
