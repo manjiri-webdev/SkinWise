@@ -26,6 +26,14 @@ class AddProductRequest(BaseModel):
     brand: Optional[str] = None
     image_url: Optional[str] = None
 
+class EvaluateProductRequest(BaseModel):
+    product_id: Optional[int] = None
+    product_name: Optional[str] = None
+    brand: Optional[str] = None
+    category: Optional[str] = None
+    normalized_ingredients: Optional[str] = None
+    full_ingredient_list: Optional[str] = None
+
 class ProfileUpdate(BaseModel):
     age_range: Optional[str] = None
     gender: Optional[str] = None
@@ -245,6 +253,47 @@ async def add_product(product_data: AddProductRequest, user_id: str = Depends(ge
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error adding product: {str(e)}")
+
+@router.post("/personalization/evaluate-product")
+async def evaluate_product_endpoint(request: EvaluateProductRequest, user_id: str = Depends(get_current_user)):
+    """
+    Evaluate an arbitrary product (in or out of user routine) against the authenticated user's profile.
+    Reuses the existing personalization/suitability engine.
+    """
+    try:
+        personalization_service = PersonalizationService()
+        result = personalization_service.evaluate_single_product(
+            user_id=user_id,
+            product_id=request.product_id,
+            product_data=request.model_dump()
+        )
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Evaluation failed"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error evaluating product: {str(e)}")
+
+@router.get("/personalization/evaluate-product/{product_id}")
+async def evaluate_product_by_id(product_id: int, user_id: str = Depends(get_current_user)):
+    """
+    Evaluate an arbitrary catalog product by ID against the authenticated user's profile.
+    Reuses the existing personalization/suitability engine.
+    """
+    try:
+        personalization_service = PersonalizationService()
+        result = personalization_service.evaluate_single_product(
+            user_id=user_id,
+            product_id=product_id
+        )
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Evaluation failed"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error evaluating product: {str(e)}")
 
 @router.get("/personalization/products/{category}")
 async def get_products_by_category(category: str, user_id: str = Depends(get_current_user)):

@@ -140,6 +140,40 @@ export async function analyzeProfile(): Promise<any> {
   });
 }
 
+export interface EvaluateProductPayload {
+  product_id?: number | null;
+  product_name?: string | null;
+  brand?: string | null;
+  category?: string | null;
+  normalized_ingredients?: string | null;
+  full_ingredient_list?: string | null;
+}
+
+export interface ProductEvaluationResponse {
+  success: boolean;
+  product_id?: number | null;
+  product_name?: string;
+  brand?: string;
+  category?: string;
+  evaluation: {
+    decision: "KEEP" | "CAUTION" | "REJECT";
+    confidence: "high" | "medium" | "low";
+    reason_codes: string[];
+    reasons: string[];
+    mitigations: string[];
+    fit_score?: number;
+    risk_score?: number;
+    _total_parsed_ingredients?: number;
+  };
+}
+
+export async function evaluateProduct(payload: EvaluateProductPayload): Promise<ProductEvaluationResponse> {
+  return apiCall("/personalization/evaluate-product", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function getLatestAnalysis(): Promise<LatestAnalysisResponse> {
   return apiCall("/personalization/latest-analysis");
 }

@@ -17,7 +17,7 @@ import {
   Info,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { analyzeProfile } from "@/services/personalization";
+import { evaluateProduct } from "@/services/personalization";
 import "./product-analysis.css";
 
 type IngredientFilter =
@@ -204,29 +204,29 @@ function ProductAnalysisContent() {
 
       setResolvedIngredients(resolvedList);
 
-      // 4. Check if current user has an evaluation for this product
+      // 4. Evaluate product against logged-in user profile using existing personalization engine
       try {
         const {
           data: { user },
         } = await supabase.auth.getUser();
 
-        if (user) {
-          const persResult = await analyzeProfile();
-          if (persResult && persResult.evaluated_products) {
-            const matching = persResult.evaluated_products.find(
-              (p: any) =>
-                p.product_id === productData?.product_id ||
-                p.product_name?.toLowerCase() === productData?.product_name?.toLowerCase()
-            );
+        if (user && productData) {
+          const evalResult = await evaluateProduct({
+            product_id: productData.product_id,
+            product_name: productData.product_name,
+            brand: productData.brand,
+            category: productData.category,
+            normalized_ingredients: productData.normalized_ingredients,
+            full_ingredient_list: productData.full_ingredient_list,
+          });
 
-            if (matching && matching.evaluation) {
-              setEvaluation(matching.evaluation);
-              setIsEvaluated(true);
-            }
+          if (evalResult && evalResult.evaluation) {
+            setEvaluation(evalResult.evaluation);
+            setIsEvaluated(true);
           }
         }
       } catch (persErr) {
-        console.warn("Could not check user evaluation:", persErr);
+        console.warn("Could not evaluate product for user profile:", persErr);
       }
     } catch (err: any) {
       console.error("Failed to load product analysis:", err);
@@ -342,9 +342,9 @@ function ProductAnalysisContent() {
           </section>
 
           {/* Card 2: Overall Compatibility Section */}
-          <section className="analysis-card p-4 sm:p-6 lg:p-7 flex flex-col sm:flex-row items-center gap-6">
+          <section className="analysis-card p-4 sm:p-6 lg:p-7 flex flex-col sm:flex-row items-start sm:items-center gap-6">
             {/* Circular Indicator */}
-            <div className="relative w-28 h-28 shrink-0 flex items-center justify-center">
+            <div className="relative w-28 h-28 shrink-0 flex items-center justify-center self-center sm:self-start">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
                 <circle
                   cx="50"
@@ -379,7 +379,15 @@ function ProductAnalysisContent() {
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-2">
                 {isEvaluated ? (
                   <>
-                    <span className="text-sm font-bold text-[#141414] leading-tight">
+                    <span
+                      className={`text-sm font-bold leading-tight ${
+                        evaluation?.decision === "KEEP"
+                          ? "text-[#48805B]"
+                          : evaluation?.decision === "CAUTION"
+                          ? "text-[#D97706]"
+                          : "text-[#DC2626]"
+                      }`}
+                    >
                       {evaluation?.decision}
                     </span>
                     <span className="text-[10px] text-[#7A7382] mt-0.5 font-medium">
@@ -398,22 +406,25 @@ function ProductAnalysisContent() {
             </div>
 
             {/* Compatibility Copy */}
-            <div className="flex-1 text-center sm:text-left">
-              <h2
-                className="text-lg sm:text-xl font-bold text-[#141414]"
-                style={{ fontFamily: "Georgia, serif" }}
-              >
-                Overall compatibility
-              </h2>
+            <div className="flex-1 w-full text-center sm:text-left">
+              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
+                <h2
+                  className="text-lg sm:text-xl font-bold text-[#141414]"
+                  style={{ fontFamily: "Georgia, serif" }}
+                >
+                  Overall compatibility
+                </h2>
+                {isEvaluated && (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-[#F4EFFB] text-[#6E578F] border border-purple-100/80">
+                    <CheckCircle2 size={12} className="text-[#8C7C9E]" />
+                    Analyzed for your profile
+                  </span>
+                )}
+              </div>
 
               {isEvaluated ? (
-                <div>
-                  <p className="text-xs sm:text-sm text-[#6B6375] mt-1 leading-relaxed">
-                    {evaluation?.reasons?.[0] ||
-                      "This product is generally safe for your skin profile, with no major concerns."}
-                  </p>
-
-                  <div className="mt-2.5 flex items-center justify-center sm:justify-start gap-2">
+                <div className="mt-2 flex flex-col gap-2.5">
+                  <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
                     <span
                       className={`text-xs font-bold px-3 py-0.5 rounded-full ${
                         evaluation?.decision === "KEEP"
@@ -430,20 +441,61 @@ function ProductAnalysisContent() {
                         : "Not Recommended"}
                     </span>
                     {evaluation?.confidence && (
-                      <span className="text-[11px] text-[#7A7382]">
+                      <span className="text-[11px] text-[#7A7382] font-medium capitalize">
                         · {evaluation.confidence} confidence
                       </span>
                     )}
                   </div>
+
+                  {/* Primary Reasons / Compatibility Notes */}
+                  {evaluation?.reasons && evaluation.reasons.length > 0 && (
+                    <div className="flex flex-col gap-1.5 mt-1 text-left">
+                      {evaluation.reasons.map((reason: string, idx: number) => (
+                        <div key={idx} className="flex items-start gap-2 text-xs sm:text-sm text-[#4A4553]">
+                          <span className="text-[#DE688E] mt-0.5 font-bold shrink-0">•</span>
+                          <span className="leading-relaxed">{reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Mitigations & Safety Instructions */}
+                  {evaluation?.mitigations && evaluation.mitigations.length > 0 && (
+                    <div className="mt-2 p-3 bg-[#FFF9F2] border border-[#FDE6D2] rounded-xl text-left">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-[#C05621] mb-1">
+                        <AlertTriangle size={14} />
+                        <span>Recommended Usage & Mitigations</span>
+                      </div>
+                      <div className="flex flex-col gap-1 text-xs text-[#7B341E]">
+                        {evaluation.mitigations.map((mitigation: string, idx: number) => (
+                          <p key={idx} className="leading-relaxed">
+                            {mitigation}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
-                <div>
-                  <p className="text-xs sm:text-sm text-[#7A7382] mt-1 leading-relaxed">
-                    Compatibility analysis unavailable for non-routine products. Add this product to your profile routine to calculate personalized safety evaluations.
+                <div className="mt-2">
+                  <p className="text-xs sm:text-sm text-[#7A7382] leading-relaxed">
+                    Sign in to your SkinWise account to view personalized compatibility analysis based on your skin type, sensitivity, concerns, and routine history.
                   </p>
-                  <span className="inline-block text-xs font-bold px-3 py-0.5 rounded-full mt-2.5 bg-gray-100 text-gray-700">
-                    Not analyzed for your profile yet
-                  </span>
+                  <div className="mt-3 flex items-center justify-center sm:justify-start gap-3">
+                    <button
+                      onClick={() => router.push("/auth/login")}
+                      className="text-xs font-bold text-[#DE688E] hover:underline cursor-pointer"
+                    >
+                      Sign In
+                    </button>
+                    <span className="text-gray-300">·</span>
+                    <button
+                      onClick={() => router.push("/questionnaire")}
+                      className="text-xs font-bold text-[#6B6375] hover:underline cursor-pointer"
+                    >
+                      Complete Skin Questionnaire
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

@@ -471,8 +471,8 @@ class PersonalizationService:
                 return evaluation
 
         product_id = product.get("product_id")
-        if not product_id:
-            # Product is unresolved - mark with explicit CAUTION / PRODUCT_UNRESOLVED only
+        if not product_id and not ingredients:
+            # Product is unresolved and has no ingredients - mark with explicit CAUTION / PRODUCT_UNRESOLVED only
             product_name = product.get("product_name") or "Product"
             evaluation["decision"] = "CAUTION"
             evaluation["confidence"] = "low"
@@ -486,8 +486,10 @@ class PersonalizationService:
             ]
             return evaluation
         
-        if ingredients is None:
+        if ingredients is None and product_id:
             ingredients, total_parsed = self.get_product_ingredients(product_id)
+        elif ingredients is None:
+            ingredients, total_parsed = [], 0
         
         fit_score = 0
         risk_score = 0
@@ -1327,4 +1329,128 @@ class PersonalizationService:
             "missing_steps": all_missing_steps,
             "recommendations": recommendations,
             "lifestyle_insights": lifestyle_insights
+        }
+
+    def evaluate_single_product(
+        self,
+        user_id: str,
+        product_id: Optional[int] = None,
+        product_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Evaluate an arbitrary product (in or out of user routine) against the logged-in user's profile.
+        Reuses the exact evaluate_product_suitability engine.
+        
+        Args:
+            user_id: Authenticated user ID
+            product_id: Optional catalog product ID
+            product_data: Optional product attributes (name, brand, ingredients, etc.)
+            
+        Returns:
+            Dictionary containing evaluation results (decision, confidence, reasons, mitigations)
+        """
+        user_data = self.load_user_data(user_id)
+        
+        # 1. Resolve product record
+        product = {}
+        if product_id:
+            try:
+                p_resp = self.supabase.table("products").select("*").eq("product_id", product_id).execute()
+                if p_resp.data:
+                    product = p_resp.data[0]
+            except Exception as e:
+                print(f"Error fetching product {product_id}: {e}")
+        
+        if not product and product_data:
+            p_name = product_data.get("product_name")
+            p_brand = product_data.get("brand")
+            if p_name:
+                try:
+                    q = self.supabase.table("products").select("*")
+                    if p_brand:
+                        q = q.ilike("brand", f"%{p_brand}%")
+                    q = q.ilike("product_name", f"%{p_name}%").limit(1)
+                    p_resp = q.execute()
+                    if p_resp.data:
+                        product = p_resp.data[0]
+                except Exception as e:
+                    print(f"Error searching product by name: {e}")
+            if not product:
+                product = dict(product_data)
+        
+        if not product:
+            return {
+                "success": False,
+                "error": "Product could not be resolved or found",
+                "evaluation": None
+            }
+        
+        target_pid = product.get("product_id")
+        target_name = (product.get("product_name") or "").lower()
+        
+        # 2. Check if user has an existing reaction or notes logged for this product
+        product_history = None
+        for p in user_data.get("current_products", []):
+            if target_pid and p.get("product_id") == target_pid:
+                product_history = p
+                break
+            elif target_name and (p.get("product_name") or "").lower() == target_name:
+                product_history = p
+                break
+                
+        if not product_history and user_id:
+            try:
+                q = self.supabase.table("user_product_history").select("*").eq("user_id", user_id)
+                if target_pid:
+                    q = q.eq("product_id", target_pid)
+                elif target_name:
+                    q = q.ilike("product_name", f"%{target_name}%")
+                h_resp = q.order("created_at", desc=True).limit(1).execute()
+                if h_resp.data:
+                    product_history = h_resp.data[0]
+            except Exception as e:
+                print(f"Error checking user product history: {e}")
+        
+        # 3. Resolve ingredients
+        ingredients = []
+        total_parsed = 0
+        if target_pid:
+            ingredients, total_parsed = self.get_product_ingredients(target_pid)
+        else:
+            raw_list = product.get("normalized_ingredients") or product.get("full_ingredient_list")
+            if raw_list:
+                parsed_names = [n.strip() for n in raw_list.replace("|", ",").split(",") if n.strip()]
+                total_parsed = len(parsed_names)
+                for ing_name in parsed_names:
+                    cache_key = ing_name.lower()
+                    if cache_key in self._ingredient_cache:
+                        ingredients.append(self._ingredient_cache[cache_key])
+                        continue
+                    try:
+                        ing_resp = self.supabase.table("ingredients").select("*").ilike("ingredient", f"%{ing_name}%").limit(1).execute()
+                        if ing_resp.data:
+                            ingredients.append(ing_resp.data[0])
+                            self._ingredient_cache[cache_key] = ing_resp.data[0]
+                    except Exception as e:
+                        pass
+        
+        product["_resolved_ingredients"] = ingredients
+        product["_total_parsed_ingredients"] = total_parsed
+        
+        # 4. Evaluate using the existing suitability engine
+        evaluation = self.evaluate_product_suitability(
+            product,
+            user_data,
+            product_history=product_history,
+            ingredients=ingredients,
+            total_parsed=total_parsed
+        )
+        
+        return {
+            "success": True,
+            "product_id": target_pid,
+            "product_name": product.get("product_name"),
+            "brand": product.get("brand"),
+            "category": product.get("category"),
+            "evaluation": evaluation
         }
