@@ -149,6 +149,23 @@ export interface EvaluateProductPayload {
   full_ingredient_list?: string | null;
 }
 
+export interface IngredientEvaluation {
+  ingredient: string;
+  status: "Suitable" | "Use with Caution" | "Not recommended";
+  reason: string;
+  personalized: boolean;
+  risk_level?: string;
+  matched_concerns?: string[];
+  matched_skin_type?: boolean;
+  is_contraindicated?: boolean;
+  general_precaution?: string | null;
+  function?: string | null;
+  benefits?: string | null;
+  irritation_risk?: string | null;
+  who_should_avoid?: string | null;
+  allergy_sensitization?: string | null;
+}
+
 export interface ProductEvaluationResponse {
   success: boolean;
   product_id?: number | null;
@@ -164,6 +181,7 @@ export interface ProductEvaluationResponse {
     fit_score?: number;
     risk_score?: number;
     _total_parsed_ingredients?: number;
+    ingredient_evaluations?: IngredientEvaluation[];
   };
 }
 

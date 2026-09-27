@@ -34,6 +34,9 @@ interface ResolvedIngredient {
   who_should_avoid?: string | null;
   allergy_sensitization?: string | null;
   status: "Suitable" | "Use with Caution" | "Not recommended" | "Unrated";
+  reason?: string | null;
+  personalized?: boolean;
+  general_precaution?: string | null;
 }
 
 interface ProductRecord {
@@ -159,26 +162,36 @@ function ProductAnalysisContent() {
           if (ingRecord) {
             const ir = (ingRecord.irritation_risk || "").toLowerCase();
             const whoAvoid = (ingRecord.who_should_avoid || "").toLowerCase();
+            const als = (ingRecord.allergy_sensitization || "").toLowerCase();
 
             let status: ResolvedIngredient["status"] = "Suitable";
+            let reason = "Low irritation risk formulation ingredient; well tolerated";
 
-            if (
-              ir.includes("high") ||
-              ir.includes("very high") ||
-              whoAvoid.includes("sensitive") ||
-              whoAvoid.includes("allergic")
-            ) {
-              status = "Not recommended";
+            // Baseline toxicology classification prior to personalization
+            if (ir.includes("very high")) {
+              status = "Use with Caution";
+              reason = "Elevated irritation risk (Very High); patch testing strongly recommended";
+            } else if (ir.includes("high")) {
+              status = "Use with Caution";
+              reason = "Elevated irritation risk (High); patch testing recommended before regular use";
             } else if (
               ir.includes("medium") ||
               ir.includes("moderate") ||
               lower.includes("fragrance") ||
               lower.includes("parfum") ||
-              lower.includes("alcohol denat")
+              lower.includes("alcohol denat") ||
+              als.includes("sensitizer") ||
+              als.includes("allergen")
             ) {
               status = "Use with Caution";
+              reason = "Moderate irritation potential or recognized contact sensitizer; introduce gradually";
             } else {
               status = "Suitable";
+              if (whoAvoid) {
+                reason = "Low irritation risk formulation ingredient (general precautions apply to specific allergies)";
+              } else {
+                reason = "Low irritation risk formulation ingredient; well tolerated";
+              }
             }
 
             resolvedList.push({
@@ -189,6 +202,9 @@ function ProductAnalysisContent() {
               who_should_avoid: ingRecord.who_should_avoid,
               allergy_sensitization: ingRecord.allergy_sensitization,
               status,
+              reason,
+              personalized: false,
+              general_precaution: ingRecord.who_should_avoid || null,
             });
           } else {
             // Ingredient not in database yet
@@ -197,6 +213,8 @@ function ProductAnalysisContent() {
               function: "Skin conditioning agent",
               benefits: "Formulation ingredient",
               status: "Suitable",
+              reason: "Standard formulation ingredient; low irritation baseline",
+              personalized: false,
             });
           }
         }
@@ -223,6 +241,39 @@ function ProductAnalysisContent() {
           if (evalResult && evalResult.evaluation) {
             setEvaluation(evalResult.evaluation);
             setIsEvaluated(true);
+
+            // Merge personalized ingredient evaluations from the personalization engine
+            if (evalResult.evaluation.ingredient_evaluations?.length) {
+              const evalMap = new Map<string, any>();
+              for (const ie of evalResult.evaluation.ingredient_evaluations) {
+                evalMap.set((ie.ingredient || "").toLowerCase(), ie);
+              }
+
+              setResolvedIngredients((prev) =>
+                prev.map((ing) => {
+                  const lower = ing.name.toLowerCase();
+                  let match = evalMap.get(lower);
+                  if (!match) {
+                    for (const [key, val] of evalMap.entries()) {
+                      if (lower.includes(key) || key.includes(lower)) {
+                        match = val;
+                        break;
+                      }
+                    }
+                  }
+                  if (match) {
+                    return {
+                      ...ing,
+                      status: match.status,
+                      reason: match.reason,
+                      personalized: match.personalized,
+                      general_precaution: match.general_precaution || ing.general_precaution,
+                    };
+                  }
+                  return ing;
+                })
+              );
+            }
           }
         }
       } catch (persErr) {
@@ -591,6 +642,28 @@ function ProductAnalysisContent() {
                           <p className="text-xs text-[#6B6375] leading-snug">
                             {ing.benefits || ing.function || "Skin conditioning formulation ingredient"}
                           </p>
+                          {ing.reason && (
+                            <p className="text-[11px] font-medium mt-1 flex items-center gap-1.5 flex-wrap">
+                              {ing.status === "Suitable" && (
+                                <span className="inline-flex items-center gap-1 text-[#48805B]">
+                                  <CheckCircle2 size={12} className="shrink-0" />
+                                  <span>{ing.reason}</span>
+                                </span>
+                              )}
+                              {ing.status === "Use with Caution" && (
+                                <span className="inline-flex items-center gap-1 text-[#D97706]">
+                                  <AlertTriangle size={12} className="shrink-0" />
+                                  <span>{ing.reason}</span>
+                                </span>
+                              )}
+                              {ing.status === "Not recommended" && (
+                                <span className="inline-flex items-center gap-1 text-[#DC2626]">
+                                  <AlertCircle size={12} className="shrink-0" />
+                                  <span>{ing.reason}</span>
+                                </span>
+                              )}
+                            </p>
+                          )}
                         </div>
 
                         {/* Desktop status badge & chevron */}
@@ -635,11 +708,22 @@ function ProductAnalysisContent() {
                           </div>
 
                           <div>
-                            <span className="font-bold text-[#6B6375] block">Who Should Avoid:</span>
+                            <span className="font-bold text-[#6B6375] block">General Caution / Who Should Avoid:</span>
                             <span className="text-[#141414]">
                               {ing.who_should_avoid || "None specific"}
                             </span>
                           </div>
+
+                          {ing.reason && (
+                            <div className="sm:col-span-3 pt-2 mt-1 border-t border-gray-200/60">
+                              <span className="font-bold text-[#6B6375] block">
+                                {ing.personalized ? "Personalized Profile Compatibility & Why:" : "Safety & Evaluation Note:"}
+                              </span>
+                              <span className="text-[#141414] font-medium leading-relaxed">
+                                {ing.reason}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

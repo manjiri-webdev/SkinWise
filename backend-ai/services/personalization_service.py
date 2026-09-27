@@ -407,6 +407,231 @@ class PersonalizationService:
                 
         return actives
     
+    def _extract_user_allergies_and_triggers(
+        self, 
+        user_data: Dict[str, Any], 
+        product_history: Optional[Dict[str, Any]] = None
+    ) -> set:
+        triggers = set()
+        profile = user_data.get("profile") or {}
+        
+        # 1. Explicit allergies in profile (if column exists)
+        allergies = profile.get("allergies") or profile.get("known_allergies") or []
+        if isinstance(allergies, list):
+            for a in allergies:
+                triggers.add(str(a).strip().lower())
+        elif isinstance(allergies, str):
+            for a in allergies.split(","):
+                triggers.add(a.strip().lower())
+                
+        # 2. Profile skin concerns (e.g., "Salicylate allergy", "Rosacea", "Eczema")
+        concerns = profile.get("skin_concerns") or []
+        for c in concerns:
+            c_low = str(c).strip().lower()
+            if any(term in c_low for term in ["allergy", "allergic", "sensitivity", "rosacea", "eczema"]):
+                triggers.add(c_low)
+                
+        # 3. Product history & current products notes/reactions
+        all_prods = list(user_data.get("current_products") or [])
+        if product_history and product_history not in all_prods:
+            all_prods.append(product_history)
+            
+        signal_keywords = [
+            "salicylate", "aspirin", "peppermint", "menthol", "fragrance", "parfum", 
+            "alcohol denat", "retinol", "glycolic", "lactic", "benzoyl peroxide", 
+            "tea tree", "essential oil"
+        ]
+        
+        for p in all_prods:
+            reaction = (p.get("reaction") or "").strip().lower()
+            notes = (p.get("notes") or "").strip().lower() if isinstance(p.get("notes"), str) else ""
+            p_name = (p.get("productName") or p.get("product_name") or "").lower()
+            
+            has_adverse = reaction in ["mild", "moderate", "severe"] or any(
+                sig in notes for sig in ["allergic", "allergy", "burning", "stinging", "rash", "broke out", "breakout", "redness", "itch"]
+            )
+            
+            if has_adverse:
+                for kw in signal_keywords:
+                    # Make sure not negated (e.g., "no fragrance" or "not allergic")
+                    if kw in notes and f"no {kw}" not in notes and f"without {kw}" not in notes and f"not {kw}" not in notes:
+                        triggers.add(kw)
+                    elif kw in p_name:
+                        triggers.add(kw)
+                        
+        return triggers
+
+    def evaluate_ingredients_suitability(
+        self,
+        ingredients: List[Dict[str, Any]],
+        user_data: Dict[str, Any],
+        skin_analysis: Optional[Dict[str, Any]] = None,
+        product_history: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Evaluate individual ingredient compatibility against the user's profile and toxicology data.
+        Prevents general informational 'who_should_avoid' advisories from turning into universal
+        'Not recommended' labels unless the user's specific profile or history matches.
+        """
+        evaluations = []
+        profile = user_data.get("profile") or {}
+        has_profile = bool(profile)
+        
+        skin_sensitivity = (profile.get("skin_sensitivity") or "").strip().lower()
+        is_sensitive = skin_sensitivity in ["yes", "sensitive"]
+        skin_type = (profile.get("skin_type") or "").strip().lower()
+        user_concerns = [str(c).strip().lower() for c in (profile.get("skin_concerns") or [])]
+        user_goals = [str(g).strip().lower() for g in (profile.get("skincare_goals") or [])]
+        
+        flareup_severity = (skin_analysis.get("severity") or "").lower() if skin_analysis else ""
+        user_triggers = self._extract_user_allergies_and_triggers(user_data, product_history)
+        
+        for ing in ingredients:
+            ing_name = ing.get("ingredient") or ing.get("canonical_name") or "Unknown Ingredient"
+            ing_name_lower = ing_name.lower()
+            ir = (ing.get("irritation_risk") or "").strip().lower()
+            who_avoid = (ing.get("who_should_avoid") or "").strip()
+            who_avoid_low = who_avoid.lower()
+            als = (ing.get("allergy_sensitization") or "").strip().lower()
+            suitable_types = (ing.get("suitable_skin_types") or "").strip().lower()
+            benefits = ing.get("benefits") or ""
+            benefits_lower = benefits.lower()
+            func = ing.get("function") or ""
+            
+            # Default values
+            status = "Suitable"
+            reason = "Well tolerated with low irritation risk; compatible with your profile"
+            personalized = False
+            is_contraindicated = False
+            matched_skin_type = False
+            matched_concerns = []
+            
+            # Check user skin type compatibility
+            if skin_type:
+                if "all" in suitable_types or skin_type in suitable_types:
+                    matched_skin_type = True
+                elif skin_type == "combination" and any(k in suitable_types for k in ["oily", "dry", "normal"]):
+                    matched_skin_type = True
+
+            # Check user concerns compatibility
+            for c in user_concerns:
+                if c in (ing.get("skin_concerns") or "").lower() or c in benefits_lower:
+                    matched_concerns.append(c.capitalize())
+            for g in user_goals:
+                if g in benefits_lower:
+                    matched_concerns.append(g.capitalize())
+            matched_concerns = list(dict.fromkeys(matched_concerns))
+            
+            # Determine if who_avoid mentions sensitive skin (and NOT asthma or other medical conditions)
+            sensitive_skin_in_avoid = (
+                ("sensitive" in who_avoid_low and "asthma" not in who_avoid_low) or
+                "sensitive skin" in who_avoid_low
+            ) and "sensitive" not in suitable_types
+
+            # 1. SPECIFIC ALLERGY / ADVERSE REACTION TRIGGER (Personalized Contraindication)
+            matched_trigger = None
+            for trig in user_triggers:
+                if trig in ing_name_lower:
+                    matched_trigger = trig
+                    break
+                if trig in ["salicylate", "aspirin"] and ("salicylate" in who_avoid_low or "aspirin" in who_avoid_low or "salicyl" in ing_name_lower):
+                    matched_trigger = trig
+                    break
+                if trig in ["peppermint", "menthol"] and ("peppermint" in ing_name_lower or "menthol" in ing_name_lower):
+                    matched_trigger = trig
+                    break
+                if trig in ["fragrance", "parfum"] and ("fragrance" in ing_name_lower or "parfum" in ing_name_lower):
+                    matched_trigger = trig
+                    break
+            
+            if matched_trigger:
+                status = "Not recommended"
+                reason = f"Contraindicated: matches your recorded {matched_trigger} allergy / reaction history"
+                personalized = True
+                is_contraindicated = True
+            
+            # 2. SENSITIVE SKIN CONTRAINDICATION
+            elif is_sensitive and ir in ["high", "very high"] and (sensitive_skin_in_avoid or "allergen" in als or "fragrance" in who_avoid_low or "peppermint" in ing_name_lower):
+                status = "Not recommended"
+                reason = f"Contraindicated: high irritation risk ({ir.capitalize()}) unsuitable for sensitive skin"
+                personalized = True
+                is_contraindicated = True
+                
+            # 3. ACTIVE FLARE-UP CAUTION
+            elif flareup_severity in ["moderate", "severe"] and any(act in ing_name_lower for act in ["retinol", "glycolic", "lactic", "salicylic", "benzoyl peroxide"]):
+                status = "Use with Caution"
+                reason = f"Potent active ingredient during active skin flare-up ({flareup_severity.capitalize()} severity); introduce cautiously"
+                personalized = True
+                
+            # 4. SENSITIVE SKIN CAUTION (Moderate irritation or sensitive skin advisory)
+            elif is_sensitive and (ir in ["moderate", "medium"] or sensitive_skin_in_avoid):
+                status = "Use with Caution"
+                reason = f"Moderate irritation risk ({ir.capitalize() if ir else 'Moderate'}); patch test advised for your sensitive skin"
+                personalized = True
+                
+            # 5. GENERAL HIGH IRRITATION (Non-sensitive user or unauthenticated)
+            elif ir in ["high", "very high"]:
+                status = "Use with Caution"
+                if has_profile and not is_sensitive:
+                    reason = f"Elevated irritation risk ({ir.capitalize()}); patch testing recommended before regular use"
+                    personalized = True
+                else:
+                    reason = f"Elevated irritation risk ({ir.capitalize()}); patch testing recommended"
+                    personalized = False
+                    
+            # 6. GENERAL MODERATE IRRITATION OR CONTACT ALLERGEN
+            elif ir in ["moderate", "medium"] or any(term in als for term in ["high", "frequent", "common allergen", "common sensitizer"]):
+                status = "Use with Caution"
+                reason = "Moderate irritation potential or recognized contact sensitizer; introduce gradually"
+                personalized = False
+                
+            # 7. SPECIFIC HARSH INGREDIENTS (fragrance, parfum, alcohol denat)
+            elif any(term in ing_name_lower for term in ["fragrance", "parfum", "alcohol denat"]):
+                status = "Use with Caution"
+                reason = "Common contact sensitizer or drying agent; patch testing recommended"
+                personalized = False
+                
+            # 8. SUITABLE WITH PERSONALIZED EXPLANATION
+            else:
+                status = "Suitable"
+                if has_profile:
+                    personalized = True
+                    if matched_skin_type and matched_concerns:
+                        reason = f"Compatible with your {skin_type.capitalize()} skin; supports {', '.join(matched_concerns[:2])}"
+                    elif matched_skin_type:
+                        reason = f"Compatible with your {skin_type.capitalize()} skin profile (Low irritation risk)"
+                    elif matched_concerns:
+                        reason = f"Low irritation risk; supports target goals ({', '.join(matched_concerns[:2])})"
+                    elif "salicylate" in who_avoid_low or "aspirin" in who_avoid_low:
+                        reason = "Compatible with your profile (Low irritation risk; soothing anti-inflammatory)"
+                    else:
+                        reason = "Well tolerated with low irritation risk; compatible with your profile"
+                else:
+                    if "salicylate" in who_avoid_low or "aspirin" in who_avoid_low:
+                        reason = "Low irritation risk formulation ingredient (general precaution applies only to salicylate allergy)"
+                    else:
+                        reason = "Low irritation risk formulation ingredient"
+                    personalized = False
+            
+            evaluations.append({
+                "ingredient": ing_name,
+                "status": status,
+                "reason": reason,
+                "personalized": personalized,
+                "risk_level": ir.capitalize() if ir else "Low",
+                "matched_concerns": matched_concerns,
+                "matched_skin_type": matched_skin_type,
+                "is_contraindicated": is_contraindicated,
+                "general_precaution": who_avoid if who_avoid else None,
+                "function": func,
+                "benefits": benefits,
+                "irritation_risk": ing.get("irritation_risk"),
+                "who_should_avoid": who_avoid if who_avoid else None,
+                "allergy_sensitization": ing.get("allergy_sensitization"),
+            })
+            
+        return evaluations
+    
     def evaluate_product_suitability(
         self,
         product: Dict[str, Any],
@@ -468,6 +693,7 @@ class PersonalizationService:
                 evaluation["mitigations"].append("Discontinue use immediately and consult a dermatologist")
                 evaluation["confidence"] = "high"
                 evaluation["_product_history"] = product_history
+                evaluation["ingredient_evaluations"] = self.evaluate_ingredients_suitability(ingredients, user_data, skin_analysis, product_history) if ingredients else []
                 return evaluation
 
         product_id = product.get("product_id")
@@ -484,6 +710,7 @@ class PersonalizationService:
             evaluation["mitigations"] = [
                 self._generate_reason_specific_mitigation("PRODUCT_UNRESOLVED", product, user_data, evaluation, ingredients=[])
             ]
+            evaluation["ingredient_evaluations"] = []
             return evaluation
         
         if ingredients is None and product_id:
@@ -500,13 +727,43 @@ class PersonalizationService:
         evidence_ratio = (researched_count / total_parsed) if total_parsed > 0 else (1.0 if resolved_count > 0 else 0.0)
         evidence_score = round(evidence_ratio * 100)
         
+        # Check user-specific allergy / adverse reaction triggers against product ingredients
+        user_triggers = self._extract_user_allergies_and_triggers(user_data, product_history)
+        contraindicated_allergy_ing = None
+        for ing in ingredients:
+            ing_name_low = (ing.get("ingredient") or "").lower()
+            who_avoid_low = (ing.get("who_should_avoid") or "").lower()
+            for trig in user_triggers:
+                if trig in ing_name_low or (trig in ["salicylate", "aspirin"] and ("salicylate" in who_avoid_low or "aspirin" in who_avoid_low or "salicyl" in ing_name_low)):
+                    contraindicated_allergy_ing = (ing.get("ingredient"), trig)
+                    break
+            if contraindicated_allergy_ing:
+                break
+                
+        if contraindicated_allergy_ing:
+            ing_name, trig = contraindicated_allergy_ing
+            evaluation["decision"] = "REJECT"
+            evaluation["reason_codes"].append("CONTRAINDICATION")
+            evaluation["reasons"].append(f"{ing_name} is contraindicated due to your recorded {trig} allergy / sensitivity")
+            evaluation["mitigations"].append(f"Avoid this product; it contains {ing_name} which conflicts with your {trig} sensitivity")
+            evaluation["confidence"] = "high"
+            evaluation["ingredient_evaluations"] = self.evaluate_ingredients_suitability(
+                ingredients, user_data, skin_analysis, product_history
+            )
+            return evaluation
+
         skin_sensitivity = (profile.get("skin_sensitivity") or "").strip().lower()
         if skin_sensitivity in ["yes", "sensitive"]:
             for ing in ingredients:
                 ing_name = ing.get("ingredient") or ""
                 who_avoid = (ing.get("who_should_avoid") or "").lower()
                 ir = (ing.get("irritation_risk") or "").lower()
-                if "sensitive" in who_avoid and ir in ["high", "very high"]:
+                suitable_skin_types = (ing.get("suitable_skin_types") or "").lower()
+                sensitive_skin_in_avoid = (
+                    ("sensitive" in who_avoid and "asthma" not in who_avoid) or
+                    "sensitive skin" in who_avoid
+                ) and "sensitive" not in suitable_skin_types
+                if sensitive_skin_in_avoid and ir in ["high", "very high"]:
                     evaluation["decision"] = "REJECT"
                     evaluation["reason_codes"].append("CONTRAINDICATION")
                     evaluation["reasons"].append(f"{ing_name} is strongly contraindicated for sensitive skin (high irritation risk)")
@@ -514,6 +771,9 @@ class PersonalizationService:
                         self._generate_reason_specific_mitigation("CONTRAINDICATION", product, user_data, evaluation, ingredients)
                     )
                     evaluation["confidence"] = "high"
+                    evaluation["ingredient_evaluations"] = self.evaluate_ingredients_suitability(
+                        ingredients, user_data, skin_analysis, product_history
+                    )
                     return evaluation
         
         # ------------------------------------------------------------------
@@ -768,6 +1028,9 @@ class PersonalizationService:
         if not evaluation["reasons"]:
             evaluation["reasons"].append("Product formulation is compatible with your skin profile")
         
+        evaluation["ingredient_evaluations"] = self.evaluate_ingredients_suitability(
+            ingredients, user_data, skin_analysis, product_history
+        )
         return evaluation
     
     def detect_cross_product_interactions(
@@ -1416,7 +1679,7 @@ class PersonalizationService:
         total_parsed = 0
         if target_pid:
             ingredients, total_parsed = self.get_product_ingredients(target_pid)
-        else:
+        if not ingredients:
             raw_list = product.get("normalized_ingredients") or product.get("full_ingredient_list")
             if raw_list:
                 parsed_names = [n.strip() for n in raw_list.replace("|", ",").split(",") if n.strip()]
