@@ -79,14 +79,22 @@ def _extract_brand_from_name(product_name: str, brand: str = None) -> tuple:
     if brand:
         norm_brand = _normalize_search_term(brand)
         if norm_name.startswith(norm_brand):
-            remaining = norm_name[len(norm_brand):].strip()
+            if product_name.lower().startswith(brand.lower()):
+                remaining = product_name[len(brand):].strip()
+                remaining = re.sub(r"^[-–—:\s]+", "", remaining).strip()
+            else:
+                remaining = norm_name[len(norm_brand):].strip()
             return (brand, remaining)
         return (brand, product_name)
     
     # Check known brands if brand was not explicitly provided
     for brand_key, brand_canon in KNOWN_BRANDS:
         if norm_name.startswith(brand_key + " ") or norm_name == brand_key:
-            remaining = norm_name[len(brand_key):].strip()
+            if product_name.lower().startswith(brand_key.lower()):
+                remaining = product_name[len(brand_key):].strip()
+                remaining = re.sub(r"^[-–—:\s]+", "", remaining).strip()
+            else:
+                remaining = norm_name[len(brand_key):].strip()
             return (brand_canon, remaining)
     
     return (brand, product_name)

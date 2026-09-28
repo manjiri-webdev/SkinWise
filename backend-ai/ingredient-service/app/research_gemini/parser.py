@@ -42,6 +42,9 @@ def parse_ingredient_list(full_ingredient_list: str) -> List[str]:
     # Clean the input but preserve structure
     ingredient_list = full_ingredient_list.strip()
     
+    # Protect commas between digits in chemical names (e.g., "1,2-Hexanediol")
+    ingredient_list = re.sub(r'(\d),(\s*\d)', r'\1__NUM_COMMA__\2', ingredient_list)
+    
     # Parse the ingredient list while preserving structure
     ingredients = []
     current_ingredient = ""
@@ -106,5 +109,8 @@ def clean_ingredient_name(ingredient: str) -> str:
     
     # Remove leading bullet points
     cleaned = re.sub(r'^[\-\*•]\s*', '', cleaned).strip()
+    
+    # Restore protected commas between digits
+    cleaned = cleaned.replace('__NUM_COMMA__', ',')
     
     return cleaned

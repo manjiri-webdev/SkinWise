@@ -12,6 +12,8 @@ RESEARCH_SITES_BLOCKLIST = [
     r"ewg\.org/skindeep",
     r"skinvasion\.com",
     r"cosmeticingredientreview\.com",
+    r"grokipedia\.com",
+    r"wikipedia\.org",
 ]
 
 # Trusted source patterns and their priorities (lower = higher priority)

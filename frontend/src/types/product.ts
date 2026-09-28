@@ -41,14 +41,17 @@ export type ProductExtractionResponse = {
 
 export type ProductAnalysisRequest = {
   product_name: string;
-  brand: string;
+  brand?: string;
+  source_url?: string;
+  category?: string;
 };
 
 export type ProductAnalysisResponse = {
   success: boolean;
   error?: string;
-  product: {
-    product_id: number;
+  warning?: string;
+  product?: {
+    product_id?: number | null;
     brand: string | null;
     product_name: string;
     category: string | null;
@@ -56,12 +59,12 @@ export type ProductAnalysisResponse = {
     full_ingredient_list: string | null;
     normalized_ingredients: string | null;
     image_url: string | null;
-    created_at: string | null;
+    created_at?: string | null;
   };
-  product_source: string;
-  total_ingredients: number;
-  ingredients: any[];
-  database_reuse_stats: {
+  product_source?: string;
+  total_ingredients?: number;
+  ingredients?: any[];
+  database_reuse_stats?: {
     products_reused: number;
     products_created: number;
     ingredients_reused: number;

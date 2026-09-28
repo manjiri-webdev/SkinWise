@@ -173,33 +173,50 @@ export default function IngredientsPage() {
   const handleProductSelectDiscovery = async (option: ProductOption) => {
     setSelectedProduct(option);
     setIsExtracting(true);
+    setError(null);
 
     try {
-      // Use analyzeProduct instead of extractProductDetails to ensure product is inserted
+      // Use analyzeProduct to ensure product and ingredients are extracted and inserted into catalog
       const response = await analyzeProduct({
         product_name: option.product_name,
         brand: option.brand,
+        source_url: option.source_url,
       });
 
-      if (response.success && response.product && response.product.product_id) {
-        // Save to recent analysis with the actual product_id
-        saveRecentAnalysis({
-          id: response.product.product_id,
-          brand: response.product.brand,
-          product_name: response.product.product_name,
-          image_url: response.product.image_url,
-          category: response.product.category || "Skincare",
-          analyzed_at: new Date().toISOString(),
-        });
+      if (response.success && response.product) {
+        if (response.product.product_id) {
+          // Save to recent analysis with the actual product_id
+          saveRecentAnalysis({
+            id: response.product.product_id,
+            brand: response.product.brand,
+            product_name: response.product.product_name,
+            image_url: response.product.image_url,
+            category: response.product.category || "Skincare",
+            analyzed_at: new Date().toISOString(),
+          });
 
-        // Navigate using the actual product_id from the database
-        router.push(`/product-analysis?id=${response.product.product_id}`);
-      } else {
-        // Product analysis failed - show specific error
-        const errorMsg = response.error || "Failed to analyze product. The product could not be found or inserted into the catalog.";
-        setError(errorMsg);
-        console.error("Product analysis failed:", response);
+          // Navigate using the actual product_id from the database
+          router.push(`/product-analysis?id=${response.product.product_id}`);
+          return;
+        } else if (response.product.product_name) {
+          // If product_id was not immediately returned, navigate with name and brand query params
+          const brandParam = response.product.brand || option.brand || "";
+          const queryParams = new URLSearchParams({
+            name: response.product.product_name,
+            ...(brandParam ? { brand: brandParam } : {}),
+          });
+          router.push(`/product-analysis?${queryParams.toString()}`);
+          return;
+        }
       }
+
+      // Product analysis failed - show specific error or warning
+      const errorMsg =
+        response.error ||
+        response.warning ||
+        "Failed to analyze product. The product could not be found or inserted into the catalog.";
+      setError(errorMsg);
+      console.error("Product analysis failed:", response);
     } catch (extractionError: any) {
       const errorMsg = extractionError.message || "Failed to analyze product. Please try again.";
       setError(errorMsg);

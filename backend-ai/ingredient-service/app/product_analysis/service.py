@@ -1,4 +1,7 @@
+import json
+import time
 from typing import Dict, List, Optional
+from google.genai import types
 from app.products.service import find_product
 from app.ingredients.service import find_ingredient, normalize_ingredient_for_lookup
 from app.discovery.service import discover_products
@@ -6,7 +9,6 @@ from app.discovery.detailed_extraction import extract_product_from_url
 from app.research_gemini.service import GeminiResearchService
 from app.research_gemini.parser import parse_ingredient_list
 from app.database.supabase import insert_product, insert_ingredient
-import time
 
 
 class ProductAnalysisService:
@@ -86,7 +88,7 @@ class ProductAnalysisService:
         else:
             # Run discovery + extraction
             print(f"[INFO] Product not found in database, running discovery: {brand} - {product_name}")
-            product_result = self._discover_and_extract_product(product_name, brand, source_url)
+            product_result = self._discover_and_extract_product(product_name, brand, source_url, category)
             
             if not product_result.get("success"):
                 return {
@@ -108,18 +110,17 @@ class ProductAnalysisService:
             if product_result.get("fallback"):
                 print(f"[WARN] Using fallback product data: {product_result.get('warning')}")
             
-            # Only insert to database if we have meaningful data (not just fallback)
-            if not product_result.get("fallback") and product.get("full_ingredient_list"):
-                # Insert new product into database
+            # Insert to database if we have an ingredient list
+            if product.get("full_ingredient_list"):
                 insert_result = self._insert_product_to_database(product)
                 
-                if insert_result.get("success"):
+                if insert_result.get("success") and insert_result.get("data"):
                     print(f"[OK] Inserted new product into database: {brand} - {product_name}")
                     product = insert_result["data"]
                 else:
                     print(f"[WARN] Failed to insert product to database: {insert_result.get('error')}")
             else:
-                print(f"[INFO] Skipping database insert for fallback/minimal data")
+                print(f"[INFO] Skipping database insert for fallback/minimal data (no ingredients)")
             
             product_source = "discovery"
         
@@ -233,151 +234,184 @@ class ProductAnalysisService:
             }
         }
     
+    def _gemini_extract_product_formulation(
+        self,
+        product_name: str,
+        brand: Optional[str] = None,
+        image_url: Optional[str] = None,
+        category: Optional[str] = None
+    ) -> Optional[Dict]:
+        """
+        Use Gemini 3.5 Flash Lite to extract official product formulation and INCI ingredient list.
+        Used as a high-accuracy fallback when web scrapers are blocked or fail to parse HTML.
+        """
+        prompt = f"""
+You are an expert cosmetic formulation scientist and INCI database analyst.
+Retrieve the official product formulation and full INCI ingredient list for:
+
+Brand: {brand or 'Unknown'}
+Product Name: {product_name}
+Category: {category or 'Skincare'}
+
+Requirements:
+1. "brand": The exact official brand name.
+2. "product_name": The standardized commercial product name.
+3. "category": Standard skincare category (e.g. Exfoliant, Serum, Moisturizer, Cleanser, Toner, Sunscreen, Mask).
+4. "main_purpose": Concise description of what the product does.
+5. "full_ingredient_list": The COMPLETE, exact official INCI ingredient list separated by commas, in order of concentration (standard INCI declaration). Do not omit or summarize any ingredients.
+"""
+        try:
+            print(f"[GEMINI] Extracting formulation for '{brand} - {product_name}'...")
+            response = self.gemini_service.client.models.generate_content(
+                model="gemini-3.5-flash-lite",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema={
+                        "type": "object",
+                        "properties": {
+                            "brand": {"type": "string"},
+                            "product_name": {"type": "string"},
+                            "category": {"type": "string"},
+                            "main_purpose": {"type": "string"},
+                            "full_ingredient_list": {"type": "string"},
+                        },
+                        "required": ["product_name", "full_ingredient_list"],
+                    },
+                ),
+            )
+            
+            raw_text = response.text
+            if not raw_text and response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                for part in response.candidates[0].content.parts:
+                    if getattr(part, "text", None):
+                        raw_text = part.text
+                        break
+            
+            if not raw_text:
+                print(f"[GEMINI] Empty response text from Gemini for '{product_name}'")
+                return None
+                
+            data = json.loads(raw_text)
+            full_list = data.get("full_ingredient_list")
+            if not full_list or len(full_list.strip()) < 5:
+                print(f"[GEMINI] No valid full_ingredient_list returned for '{product_name}'")
+                return None
+                
+            extracted_brand = data.get("brand") or brand or ""
+            extracted_name = data.get("product_name") or product_name
+            extracted_category = data.get("category") or category
+            
+            parsed_list = parse_ingredient_list(full_list)
+            normalized_pipe = " | ".join(parsed_list) if parsed_list else full_list
+            
+            return {
+                "brand": extracted_brand,
+                "product_name": extracted_name,
+                "category": extracted_category,
+                "main_purpose": data.get("main_purpose") or f"{extracted_brand} {extracted_name}",
+                "full_ingredient_list": full_list.strip(),
+                "normalized_ingredients": normalized_pipe,
+                "image_url": image_url
+            }
+        except Exception as e:
+            print(f"[GEMINI] Error extracting product formulation: {e}")
+            return None
+
     def _discover_and_extract_product(
         self,
         product_name: str,
         brand: str,
-        source_url: Optional[str] = None
+        source_url: Optional[str] = None,
+        category: Optional[str] = None
     ) -> Dict:
         """
-        Run product discovery and extraction flow with error handling and fallbacks.
-        
-        Args:
-            product_name: Product name
-            brand: Brand name
-            source_url: Optional source URL to skip discovery if provided
-            
-        Returns:
-            Dictionary with success status and product data
+        Discover and extract product data with robust multi-stage fallbacks:
+        1. If source_url provided: attempt web scraping from that URL.
+        2. If discovery needed or source_url scrape yielded no ingredients:
+           - Run discovery to get candidate URLs.
+           - Try extracting from candidates in rank order.
+        3. If web extraction failed or produced no ingredient list:
+           - Use Gemini formulation extraction to retrieve accurate INCI list.
+        4. If all fail, return minimal fallback data.
         """
-        # If source_url is provided, skip discovery and go directly to extraction
+        best_image_url = None
+        best_category = category
+
+        # Step 1: If source_url is provided, try extracting from it
         if source_url:
-            print(f"[INFO] Using provided source_url, skipping discovery: {source_url}")
+            print(f"[INFO] Using provided source_url: {source_url}")
             extraction_result = extract_product_from_url(source_url)
             
-            if not extraction_result.get("success"):
-                error_msg = extraction_result.get("error", "Extraction failed")
-                print(f"[ERROR] Extraction failed for {source_url}: {error_msg}")
-                
-                # Fallback: Create minimal product data with available info
-                fallback_data = {
-                    "brand": brand,
-                    "product_name": product_name,
-                    "category": None,
-                    "main_purpose": f"{brand} {product_name}",
-                    "full_ingredient_list": None,
-                    "image_url": None,
-                    "extraction_error": error_msg
-                }
-                
+            if extraction_result.get("success") and extraction_result.get("data", {}).get("full_ingredient_list"):
+                print(f"[OK] Successfully extracted product from provided source_url: {source_url}")
                 return {
                     "success": True,
-                    "data": fallback_data,
-                    "fallback": True,
-                    "warning": f"Extraction failed, using minimal product data: {error_msg}"
+                    "data": extraction_result["data"]
                 }
             
-            return {
-                "success": True,
-                "data": extraction_result["data"]
-            }
-        
-        # Step 1: Discover products
+            print(f"[WARN] Extraction from provided source_url did not yield ingredients: {extraction_result.get('error')}")
+
+        # Step 2: Run discovery to find candidate product pages
+        print(f"[INFO] Discovering product candidate sources for: {brand} - {product_name}")
         discovery_result = discover_products(product_name, brand)
+        options = discovery_result.get("options", []) if discovery_result.get("success") else []
         
-        if not discovery_result.get("success"):
-            error_msg = discovery_result.get("error", "Discovery failed")
-            print(f"[ERROR] Discovery failed for {brand} {product_name}: {error_msg}")
-            
-            # Fallback: Create minimal product data
-            fallback_data = {
-                "brand": brand,
-                "product_name": product_name,
-                "category": None,
-                "main_purpose": f"{brand} {product_name}",
-                "full_ingredient_list": None,
-                "image_url": None,
-                "discovery_error": error_msg
-            }
-            
+        # Step 3: Try extracting from candidate options in rank order
+        for option in options:
+            cand_url = option.get("source_url")
+            if not best_image_url and option.get("image_url"):
+                best_image_url = option.get("image_url")
+            if not best_category and option.get("category"):
+                best_category = option.get("category")
+                
+            if not cand_url or cand_url == source_url:
+                continue
+                
+            print(f"[INFO] Attempting extraction from candidate: {cand_url}")
+            ext_res = extract_product_from_url(cand_url)
+            if ext_res.get("success") and ext_res.get("data", {}).get("full_ingredient_list"):
+                extracted_data = ext_res["data"]
+                if not extracted_data.get("image_url") and best_image_url:
+                    extracted_data["image_url"] = best_image_url
+                if not extracted_data.get("category") and best_category:
+                    extracted_data["category"] = best_category
+                return {
+                    "success": True,
+                    "data": extracted_data
+                }
+
+        # Step 4: Fallback to Gemini AI formulation extraction
+        print(f"[INFO] Web extraction did not yield ingredients. Attempting Gemini formulation fallback for {brand} - {product_name}...")
+        gemini_product = self._gemini_extract_product_formulation(
+            product_name=product_name,
+            brand=brand,
+            image_url=best_image_url or (options[0].get("image_url") if options else None),
+            category=best_category or (options[0].get("category") if options else category)
+        )
+        if gemini_product and gemini_product.get("full_ingredient_list"):
+            print(f"[OK] Successfully extracted product formulation via Gemini for {brand} - {product_name}")
             return {
                 "success": True,
-                "data": fallback_data,
-                "fallback": True,
-                "warning": f"Discovery failed, using minimal product data: {error_msg}"
+                "data": gemini_product,
+                "source": "gemini_formulation"
             }
-        
-        options = discovery_result.get("options", [])
-        
-        if not options:
-            # Fallback: Create minimal product data
-            fallback_data = {
-                "brand": brand,
-                "product_name": product_name,
-                "category": None,
-                "main_purpose": f"{brand} {product_name}",
-                "full_ingredient_list": None,
-                "image_url": None,
-                "discovery_error": "No product options found"
-            }
-            
-            return {
-                "success": True,
-                "data": fallback_data,
-                "fallback": True,
-                "warning": "No product options found during discovery, using minimal product data"
-            }
-        
-        # Step 2: Extract from the best option (first in ranked list)
-        best_option = options[0]
-        discovered_source_url = best_option.get("source_url")
-        
-        if not discovered_source_url:
-            # Fallback: Create minimal product data with discovery info
-            fallback_data = {
-                "brand": brand,
-                "product_name": product_name,
-                "category": best_option.get("category"),
-                "main_purpose": f"{brand} {product_name}",
-                "full_ingredient_list": None,
-                "image_url": best_option.get("image_url"),
-                "discovery_error": "Best product option has no source URL"
-            }
-            
-            return {
-                "success": True,
-                "data": fallback_data,
-                "fallback": True,
-                "warning": "Best product option has no source URL, using minimal product data"
-            }
-        
-        extraction_result = extract_product_from_url(discovered_source_url)
-        
-        if not extraction_result.get("success"):
-            error_msg = extraction_result.get("error", "Extraction failed")
-            print(f"[ERROR] Extraction failed for {discovered_source_url}: {error_msg}")
-            
-            # Fallback: Create minimal product data with discovery info
-            fallback_data = {
-                "brand": brand,
-                "product_name": product_name,
-                "category": best_option.get("category"),
-                "main_purpose": f"{brand} {product_name}",
-                "full_ingredient_list": None,
-                "image_url": best_option.get("image_url"),
-                "extraction_error": error_msg
-            }
-            
-            return {
-                "success": True,
-                "data": fallback_data,
-                "fallback": True,
-                "warning": f"Extraction failed, using minimal product data: {error_msg}"
-            }
-        
+
+        # Step 5: Exhausted all extraction and AI methods — return minimal fallback
+        fallback_data = {
+            "brand": brand,
+            "product_name": product_name,
+            "category": best_category or (options[0].get("category") if options else category),
+            "main_purpose": f"{brand} {product_name}",
+            "full_ingredient_list": None,
+            "image_url": best_image_url or (options[0].get("image_url") if options else None),
+            "discovery_error": "All web extraction candidates and Gemini formulation fallback exhausted"
+        }
         return {
             "success": True,
-            "data": extraction_result["data"]
+            "data": fallback_data,
+            "fallback": True,
+            "warning": "No ingredients could be extracted, using minimal product data"
         }
     
     def _extract_ingredient_list(self, product: Dict) -> List[str]:
@@ -449,6 +483,8 @@ class ProductAnalysisService:
     def _insert_product_to_database(self, product_data: Dict) -> Dict:
         """
         Insert product data into Supabase products table.
+        Ensures normalized_ingredients is populated.
+        If insertion fails (e.g. duplicate or conflict), retrieves existing product.
         
         Args:
             product_data: Product data dictionary
@@ -456,28 +492,45 @@ class ProductAnalysisService:
         Returns:
             Dictionary with success status and inserted data
         """
+        full_list = product_data.get("full_ingredient_list")
+        normalized = product_data.get("normalized_ingredients")
+        
+        # Ensure normalized_ingredients is populated if we have full_ingredient_list
+        if not normalized and full_list:
+            parsed = parse_ingredient_list(full_list)
+            normalized = " | ".join(parsed) if parsed else full_list
+            product_data["normalized_ingredients"] = normalized
+            
         # Prepare data for insertion (only include required fields)
         insert_data = {
             "brand": product_data.get("brand"),
             "category": product_data.get("category"),
             "product_name": product_data.get("product_name"),
             "main_purpose": product_data.get("main_purpose"),
-            "full_ingredient_list": product_data.get("full_ingredient_list"),
-            "normalized_ingredients": product_data.get("normalized_ingredients"),
+            "full_ingredient_list": full_list,
+            "normalized_ingredients": normalized,
             "image_url": product_data.get("image_url")
         }
         
         # Log category value for debugging
         print(f"[INSERT] Category value before insert: {insert_data.get('category')}")
-        print(f"[INSERT] Full insert_data keys: {list(insert_data.keys())}")
+        print(f"[INSERT] Inserting product: {insert_data.get('brand')} - {insert_data.get('product_name')}")
         
         result = insert_product(insert_data)
         
-        # Log Supabase response category
         if result.get("success") and result.get("data"):
-            print(f"[INSERT] Supabase response category: {result['data'].get('category')}")
-        else:
-            print(f"[INSERT] Supabase insert failed: {result.get('error')}")
+            print(f"[INSERT] Successfully inserted product: ID {result['data'].get('product_id')}")
+            return result
+        
+        # On insert failure (e.g. duplicate or constraint), check if product already exists
+        print(f"[INSERT] Supabase insert failed: {result.get('error')}. Checking if product already exists...")
+        existing = find_product(product_data.get("brand"), product_data.get("product_name"))
+        if existing:
+            print(f"[INSERT] Recovered existing product ID: {existing[0].get('product_id')}")
+            return {
+                "success": True,
+                "data": existing[0]
+            }
         
         return result
     

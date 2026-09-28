@@ -12,7 +12,12 @@ def search_products(product_name: str, brand: Optional[str] = None, max_results:
     results = []
 
     if brand:
-        query = f'{brand} {product_name}'
+        brand_clean = brand.strip()
+        prod_clean = product_name.strip()
+        if prod_clean.lower().startswith(brand_clean.lower()):
+            query = prod_clean
+        else:
+            query = f'{brand_clean} {prod_clean}'
     else:
         query = f'"{product_name}" skincare'
 
@@ -174,8 +179,9 @@ def get_brand_domain(brand: str) -> Optional[str]:
         "dot & key": "dotandkey.com",
         "dotandkey": "dotandkey.com",
         "minimalist": "minimalist.in",
-        "the ordinary": "deciem.com",
-        "ordinary": "deciem.com",
+        "the ordinary": "theordinary.com",
+        "ordinary": "theordinary.com",
+        "deciem": "theordinary.com",
         "plum": "plumgoodness.com",
         "re'equil": "reequil.com",
         "reequil": "reequil.com",
