@@ -249,7 +249,13 @@ async def chat_with_assistant(
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(
+                timeout=20000,
+                retry_options=types.HttpRetryOptions(attempts=2)
+            )
+        )
 
         # Build message history for multi-turn context (last 6 turns max)
         formatted_history = []
