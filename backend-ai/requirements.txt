@@ -13,3 +13,4 @@ torchvision>=0.17.0
 ultralytics>=8.1.0
 supabase>=2.4.0
 PyJWT>=2.8.0
+google-genai>=2.0.0

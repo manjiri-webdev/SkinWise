@@ -13,8 +13,10 @@ import {
   LogOut,
   Menu,
   X,
+  Sparkles,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import ChatDrawer from "./ChatDrawer";
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -22,6 +24,7 @@ export default function Sidebar() {
   const [displayName, setDisplayName] = useState<string>("User");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+  const [chatOpen, setChatOpen] = useState<boolean>(false);
 
   useEffect(() => {
     async function loadUserData() {
@@ -120,6 +123,16 @@ export default function Sidebar() {
         </Link>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setChatOpen(true)}
+            aria-label="Open SkinWise AI Assistant"
+            title="SkinWise AI Assistant"
+            className="p-1.5 rounded-full bg-[#FDF0F4] text-[#DE688E] hover:bg-[#FCE3EB] transition flex items-center justify-center cursor-pointer border border-pink-100"
+          >
+            <Sparkles size={16} />
+          </button>
+
           <Link
             href="/profile"
             aria-label="View Profile"
@@ -218,6 +231,24 @@ export default function Sidebar() {
                       </li>
                     );
                   })}
+                  <li>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        setChatOpen(true);
+                      }}
+                      className="w-full flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-semibold text-[#55505C] hover:text-[#DE688E] hover:bg-pink-50/60 transition-all duration-200 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3.5">
+                        <Sparkles size={19} strokeWidth={2} className="text-[#DE688E]" />
+                        <span>AI Assistant</span>
+                      </div>
+                      <span className="text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-full bg-pink-100 text-[#DE688E]">
+                        AI
+                      </span>
+                    </button>
+                  </li>
                   <li>
                     <Link
                       href="/profile"
@@ -334,6 +365,29 @@ export default function Sidebar() {
                   </li>
                 );
               })}
+              <li>
+                <button
+                  type="button"
+                  onClick={() => setChatOpen(true)}
+                  className={`w-full flex items-center justify-between px-4 py-3 rounded-full text-sm font-semibold transition-all duration-200 cursor-pointer ${
+                    chatOpen
+                      ? "bg-[#FDECEF] text-[#DE688E] shadow-sm"
+                      : "text-[#55505C] hover:text-[#DE688E] hover:bg-pink-50/60"
+                  }`}
+                >
+                  <div className="flex items-center gap-3.5">
+                    <Sparkles
+                      size={20}
+                      strokeWidth={chatOpen ? 2.4 : 2}
+                      className={chatOpen ? "text-[#DE688E]" : "text-[#7A7382]"}
+                    />
+                    <span>AI Assistant</span>
+                  </div>
+                  <span className="text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-full bg-pink-100 text-[#DE688E]">
+                    AI
+                  </span>
+                </button>
+              </li>
             </ul>
           </nav>
         </div>
@@ -377,6 +431,9 @@ export default function Sidebar() {
           )}
         </div>
       </aside>
+
+      {/* Slide-over AI Assistant Chat Drawer */}
+      <ChatDrawer isOpen={chatOpen} onClose={() => setChatOpen(false)} />
     </>
   );
 }

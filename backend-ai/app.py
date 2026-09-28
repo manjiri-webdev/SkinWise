@@ -16,6 +16,7 @@ from image_validation.pipeline import run_image_validation
 from routes.validation import router as validation_router
 from routes.personalization import router as personalization_router
 from routes.history import router as history_router
+from routes.chat import router as chat_router
 from detection.detect import detect_acne
 from analysis.acne_summary import summarize_acne
 from analysis.severity import calculate_severity
@@ -66,6 +67,7 @@ app.add_middleware(NormalizePathMiddleware)
 app.include_router(validation_router)
 app.include_router(personalization_router)
 app.include_router(history_router)
+app.include_router(chat_router)
 
 class UploadResponse(BaseModel):
     filename: str
