@@ -250,7 +250,7 @@ class PersonalizationService:
         if reason_code == "PRODUCT_UNRESOLVED":
             # Product could not be verified from catalog - ingredients unavailable
             mitigation_parts = [
-                f"Verify the complete INCI (ingredient list) from the packaging or official brand source to ensure no known irritants for your skin type."
+                f"Verify the complete INCI (ingredient list) from the packaging or official brand source to ensure no known irritants for your skin type; evaluation is incomplete without verified ingredients."
             ]
             
             # Check if product name indicates body-only use
@@ -424,34 +424,47 @@ class PersonalizationService:
             for a in allergies.split(","):
                 triggers.add(a.strip().lower())
                 
-        # 2. Profile skin concerns (e.g., "Salicylate allergy", "Rosacea", "Eczema")
+        # 2. Profile skin concerns (e.g., "Salicylate allergy", "Rosacea", "Eczema", "Exfoliant reaction")
         concerns = profile.get("skin_concerns") or []
         for c in concerns:
             c_low = str(c).strip().lower()
             if any(term in c_low for term in ["allergy", "allergic", "sensitivity", "rosacea", "eczema"]):
                 triggers.add(c_low)
+            if any(term in c_low for term in ["exfoliant", "peel", "acid"]):
+                triggers.add("exfoliant")
+                triggers.add("peel")
                 
         # 3. Product history & current products notes/reactions
         all_prods = list(user_data.get("current_products") or [])
+        if profile.get("current_products") and isinstance(profile.get("current_products"), list):
+            for cp in profile.get("current_products"):
+                if cp not in all_prods:
+                    all_prods.append(cp)
         if product_history and product_history not in all_prods:
             all_prods.append(product_history)
             
         signal_keywords = [
             "salicylate", "aspirin", "peppermint", "menthol", "fragrance", "parfum", 
             "alcohol denat", "retinol", "glycolic", "lactic", "benzoyl peroxide", 
-            "tea tree", "essential oil"
+            "tea tree", "essential oil", "exfoliant", "exfoliating", "exfoliation",
+            "peel", "peeling", "chemical peel", "acid peel", "aha", "bha"
         ]
         
         for p in all_prods:
             reaction = (p.get("reaction") or "").strip().lower()
             notes = (p.get("notes") or "").strip().lower() if isinstance(p.get("notes"), str) else ""
             p_name = (p.get("productName") or p.get("product_name") or "").lower()
+            p_type = (p.get("product_type") or p.get("type") or "").lower()
             
             has_adverse = reaction in ["mild", "moderate", "severe"] or any(
-                sig in notes for sig in ["allergic", "allergy", "burning", "stinging", "rash", "broke out", "breakout", "redness", "itch"]
+                sig in notes for sig in ["allergic", "allergy", "burning", "stinging", "rash", "broke out", "breakout", "redness", "itch", "peeling", "irritation"]
             )
             
             if has_adverse:
+                if any(t in p_type for t in ["exfoliant", "peel", "scrub"]) or any(t in p_name for t in ["exfoliat", "peel", "aha", "bha"]):
+                    triggers.add("exfoliant")
+                    triggers.add("peel")
+
                 for kw in signal_keywords:
                     # Make sure not negated (e.g., "no fragrance" or "not allergic")
                     if kw in notes and f"no {kw}" not in notes and f"without {kw}" not in notes and f"not {kw}" not in notes:
@@ -460,6 +473,55 @@ class PersonalizationService:
                         triggers.add(kw)
                         
         return triggers
+
+    def _detect_formulation_safety_profile(
+        self, 
+        product: Dict[str, Any], 
+        ingredients: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Detect high-potency formulations such as chemical acid peels, high-concentration AHA/BHA solutions,
+        or intensive active treatments that require elevated clinical caution.
+        Uses product attributes and ingredient analysis without hardcoding brand names.
+        """
+        import re
+        product_name = (product.get("product_name") or "").lower()
+        category = (product.get("category") or product.get("product_type") or "").lower()
+        description = (product.get("description") or product.get("main_purpose") or "").lower()
+        combined_text = f"{product_name} {category} {description}"
+
+        # 1. Check for explicit chemical peel / peeling solution indicators
+        peel_keywords = ["peeling solution", "acid peel", "chemical peel", "exfoliating peel", "facial peel", "aha/bha peel", "peel solution"]
+        is_peel_name = any(kw in combined_text for kw in peel_keywords)
+
+        # 2. Check for high concentration acid patterns (e.g. >= 15% AHA, >= 2% BHA, 30%)
+        has_high_pct = bool(re.search(r'\b(1[5-9]|[2-9][0-9])%\s*(aha|bha|acid|glycolic|lactic)?', combined_text))
+        has_30_pct = "30%" in combined_text or "25%" in combined_text or "20%" in combined_text
+
+        # 3. Analyze active ingredient profile
+        aha_actives = []
+        bha_actives = []
+        for ing in (ingredients or []):
+            ing_low = (ing.get("ingredient") or "").lower()
+            if any(aha in ing_low for aha in ["glycolic", "lactic", "tartaric", "mandelic", "citric", "malic"]):
+                aha_actives.append(ing.get("ingredient"))
+            if "salicylic" in ing_low or "betaine salicylate" in ing_low:
+                bha_actives.append(ing.get("ingredient"))
+
+        has_multi_acid_system = len(aha_actives) >= 2 and len(bha_actives) >= 1
+        is_high_potency_acid_peel = (
+            is_peel_name 
+            or (has_high_pct and (aha_actives or bha_actives))
+            or (has_30_pct and (aha_actives or bha_actives))
+            or (has_multi_acid_system and any(term in combined_text for term in ["peel", "exfoliat", "solution"]))
+        )
+
+        return {
+            "is_high_potency_acid_peel": is_high_potency_acid_peel,
+            "aha_actives": aha_actives,
+            "bha_actives": bha_actives,
+            "is_peel_name": is_peel_name
+        }
 
     def evaluate_ingredients_suitability(
         self,
@@ -478,7 +540,15 @@ class PersonalizationService:
         has_profile = bool(profile)
         
         skin_sensitivity = (profile.get("skin_sensitivity") or "").strip().lower()
-        is_sensitive = skin_sensitivity in ["yes", "sensitive"]
+        is_sensitive = (
+            skin_sensitivity in ["yes", "sensitive", "high", "very high", "high sensitivity", "reactive", "moderate"]
+            or "sensitive" in skin_sensitivity
+            or "high" in skin_sensitivity
+        )
+        is_high_sensitivity = (
+            skin_sensitivity in ["high", "very high", "high sensitivity", "very sensitive"]
+            or "high" in skin_sensitivity
+        )
         skin_type = (profile.get("skin_type") or "").strip().lower()
         user_concerns = [str(c).strip().lower() for c in (profile.get("skin_concerns") or [])]
         user_goals = [str(g).strip().lower() for g in (profile.get("skincare_goals") or [])]
@@ -543,6 +613,9 @@ class PersonalizationService:
                 if trig in ["fragrance", "parfum"] and ("fragrance" in ing_name_lower or "parfum" in ing_name_lower):
                     matched_trigger = trig
                     break
+                if trig in ["exfoliant", "exfoliation", "peel", "acid peel", "aha", "bha"] and any(a in ing_name_lower for a in ["glycolic", "salicylic", "lactic", "tartaric", "mandelic", "citric"]):
+                    matched_trigger = "prior exfoliant reaction"
+                    break
             
             if matched_trigger:
                 status = "Not recommended"
@@ -551,9 +624,12 @@ class PersonalizationService:
                 is_contraindicated = True
             
             # 2. SENSITIVE SKIN CONTRAINDICATION
-            elif is_sensitive and ir in ["high", "very high"] and (sensitive_skin_in_avoid or "allergen" in als or "fragrance" in who_avoid_low or "peppermint" in ing_name_lower):
+            elif is_sensitive and (
+                (ir in ["high", "very high"] and (sensitive_skin_in_avoid or "allergen" in als or "fragrance" in who_avoid_low or "peppermint" in ing_name_lower))
+                or (is_high_sensitivity and sensitive_skin_in_avoid and ir in ["moderate", "medium"])
+            ):
                 status = "Not recommended"
-                reason = f"Contraindicated: high irritation risk ({ir.capitalize()}) unsuitable for sensitive skin"
+                reason = f"Contraindicated: {ir.capitalize()} irritation risk unsuitable for your sensitive skin"
                 personalized = True
                 is_contraindicated = True
                 
@@ -702,7 +778,7 @@ class PersonalizationService:
             product_name = product.get("product_name") or "Product"
             evaluation["decision"] = "CAUTION"
             evaluation["confidence"] = "low"
-            evaluation["reason_codes"] = ["PRODUCT_UNRESOLVED"]
+            evaluation["reason_codes"] = ["PRODUCT_UNRESOLVED", "EVIDENCE_INCOMPLETE"]
             evaluation["reasons"] = [
                 f"Product '{product_name}' could not be verified from our catalog; ingredients unavailable for safety evaluation"
             ]
@@ -726,9 +802,97 @@ class PersonalizationService:
         researched_count = sum(1 for ing in ingredients if ing.get("evidence_source"))
         evidence_ratio = (researched_count / total_parsed) if total_parsed > 0 else (1.0 if resolved_count > 0 else 0.0)
         evidence_score = round(evidence_ratio * 100)
-        
-        # Check user-specific allergy / adverse reaction triggers against product ingredients
+
+        # Detect formulation safety profile (e.g. chemical peel, high-potency acid treatment)
+        formulation_profile = self._detect_formulation_safety_profile(product, ingredients)
+        is_high_potency_peel = formulation_profile.get("is_high_potency_acid_peel", False)
+
+        # Evaluate user sensitivity attributes
+        skin_sensitivity = (profile.get("skin_sensitivity") or "").strip().lower()
+        is_sensitive = (
+            skin_sensitivity in ["yes", "sensitive", "high", "very high", "high sensitivity", "reactive", "moderate"]
+            or "sensitive" in skin_sensitivity
+            or "high" in skin_sensitivity
+        )
+        is_high_sensitivity = (
+            skin_sensitivity in ["high", "very high", "high sensitivity", "very sensitive"]
+            or "high" in skin_sensitivity
+            or (is_sensitive and "very" in skin_sensitivity)
+        )
+
+        # 1. EVALUATE INGREDIENTS EARLY to inform product-level decision
+        ingredient_evaluations = self.evaluate_ingredients_suitability(
+            ingredients, user_data, skin_analysis, product_history
+        )
+        evaluation["ingredient_evaluations"] = ingredient_evaluations
+
+        # Check user-specific allergy / adverse reaction triggers
         user_triggers = self._extract_user_allergies_and_triggers(user_data, product_history)
+
+        # HARD SAFETY GATE 1: Check for contraindicated ingredients
+        contraindicated_ings = [
+            ie for ie in ingredient_evaluations
+            if ie.get("is_contraindicated") or ie.get("status") == "Not recommended"
+        ]
+        if contraindicated_ings:
+            evaluation["decision"] = "REJECT"
+            evaluation["confidence"] = "high"
+            evaluation["reason_codes"].append("CONTRAINDICATION")
+
+            # Check if any contraindication stems from prior adverse reaction or allergy
+            has_reaction_reason = any(
+                "reaction" in (ie.get("reason") or "").lower() or "allergy" in (ie.get("reason") or "").lower()
+                for ie in contraindicated_ings
+            )
+            has_exfoliant_trigger = any(t in ["exfoliant", "exfoliation", "peel", "acid peel", "aha", "bha"] for t in user_triggers)
+            if has_reaction_reason or has_exfoliant_trigger:
+                evaluation["reason_codes"].append("PREVIOUS_REACTION")
+
+            for cie in contraindicated_ings[:3]:
+                evaluation["reasons"].append(f"{cie['ingredient']}: {cie['reason']}")
+
+            evaluation["mitigations"].append(
+                "Avoid this product; it contains active ingredients that are contraindicated for your skin profile or reaction history."
+            )
+            evaluation["reason_codes"] = list(dict.fromkeys(evaluation["reason_codes"]))
+            evaluation["reasons"] = list(dict.fromkeys(evaluation["reasons"]))
+            evaluation["mitigations"] = list(dict.fromkeys(evaluation["mitigations"]))
+            return evaluation
+
+        # HARD SAFETY GATE 2: High-potency acid peels with sensitive skin or prior exfoliant reactions
+        if is_high_potency_peel:
+            has_exfoliant_trigger = any(t in ["exfoliant", "exfoliation", "peel", "acid peel", "aha", "bha"] for t in user_triggers)
+            if has_exfoliant_trigger:
+                evaluation["decision"] = "REJECT"
+                evaluation["confidence"] = "high"
+                evaluation["reason_codes"].extend(["CONTRAINDICATION", "PREVIOUS_REACTION"])
+                evaluation["reasons"].append(
+                    "High-concentration chemical exfoliating formulation is contraindicated due to recorded previous adverse reaction with exfoliating acid treatments"
+                )
+                evaluation["mitigations"].append(
+                    "Avoid strong chemical peels; your profile indicates previous adverse reactions to chemical exfoliants."
+                )
+                evaluation["reason_codes"] = list(dict.fromkeys(evaluation["reason_codes"]))
+                evaluation["reasons"] = list(dict.fromkeys(evaluation["reasons"]))
+                evaluation["mitigations"] = list(dict.fromkeys(evaluation["mitigations"]))
+                return evaluation
+
+            if is_sensitive:
+                evaluation["decision"] = "REJECT"
+                evaluation["confidence"] = "high"
+                evaluation["reason_codes"].append("CONTRAINDICATION")
+                evaluation["reasons"].append(
+                    "High-concentration chemical exfoliating peel is contraindicated for sensitive or reactive skin"
+                )
+                evaluation["mitigations"].append(
+                    "Avoid high-potency acid peels; opt for gentle polyhydroxy acids (PHAs) or mild enzymic exfoliants suitable for sensitive skin."
+                )
+                evaluation["reason_codes"] = list(dict.fromkeys(evaluation["reason_codes"]))
+                evaluation["reasons"] = list(dict.fromkeys(evaluation["reasons"]))
+                evaluation["mitigations"] = list(dict.fromkeys(evaluation["mitigations"]))
+                return evaluation
+
+        # HARD SAFETY GATE 3: Salicylate / aspirin allergy check
         contraindicated_allergy_ing = None
         for ing in ingredients:
             ing_name_low = (ing.get("ingredient") or "").lower()
@@ -747,34 +911,10 @@ class PersonalizationService:
             evaluation["reasons"].append(f"{ing_name} is contraindicated due to your recorded {trig} allergy / sensitivity")
             evaluation["mitigations"].append(f"Avoid this product; it contains {ing_name} which conflicts with your {trig} sensitivity")
             evaluation["confidence"] = "high"
-            evaluation["ingredient_evaluations"] = self.evaluate_ingredients_suitability(
-                ingredients, user_data, skin_analysis, product_history
-            )
+            evaluation["reason_codes"] = list(dict.fromkeys(evaluation["reason_codes"]))
+            evaluation["reasons"] = list(dict.fromkeys(evaluation["reasons"]))
+            evaluation["mitigations"] = list(dict.fromkeys(evaluation["mitigations"]))
             return evaluation
-
-        skin_sensitivity = (profile.get("skin_sensitivity") or "").strip().lower()
-        if skin_sensitivity in ["yes", "sensitive"]:
-            for ing in ingredients:
-                ing_name = ing.get("ingredient") or ""
-                who_avoid = (ing.get("who_should_avoid") or "").lower()
-                ir = (ing.get("irritation_risk") or "").lower()
-                suitable_skin_types = (ing.get("suitable_skin_types") or "").lower()
-                sensitive_skin_in_avoid = (
-                    ("sensitive" in who_avoid and "asthma" not in who_avoid) or
-                    "sensitive skin" in who_avoid
-                ) and "sensitive" not in suitable_skin_types
-                if sensitive_skin_in_avoid and ir in ["high", "very high"]:
-                    evaluation["decision"] = "REJECT"
-                    evaluation["reason_codes"].append("CONTRAINDICATION")
-                    evaluation["reasons"].append(f"{ing_name} is strongly contraindicated for sensitive skin (high irritation risk)")
-                    evaluation["mitigations"].append(
-                        self._generate_reason_specific_mitigation("CONTRAINDICATION", product, user_data, evaluation, ingredients)
-                    )
-                    evaluation["confidence"] = "high"
-                    evaluation["ingredient_evaluations"] = self.evaluate_ingredients_suitability(
-                        ingredients, user_data, skin_analysis, product_history
-                    )
-                    return evaluation
         
         # ------------------------------------------------------------------
         # 2. FIT EVALUATION (Multi-Factor Positive Scoring)
@@ -849,6 +989,27 @@ class PersonalizationService:
         # ------------------------------------------------------------------
         # 3. RISK EVALUATION (Irritation, Sensitization, Environmental)
         # ------------------------------------------------------------------
+        # Caution ingredients from early ingredient evaluation
+        caution_ings = [ie for ie in ingredient_evaluations if ie.get("status") == "Use with Caution"]
+        caution_count = len(caution_ings)
+        risk_score += caution_count * 6
+
+        # Elevated formulation potency risk (e.g. chemical acid peels)
+        if is_high_potency_peel:
+            risk_score += 20
+            evaluation["reason_codes"].append("FORMULATION_POTENCY_CAUTION")
+            evaluation["reasons"].append(
+                "High-concentration chemical exfoliating formulation (AHA 30% / BHA 2%): intensive treatment requires acclimatization and elevated caution"
+            )
+
+        # Active cautions from caution ingredients
+        if caution_count > 0:
+            caution_names = [c["ingredient"] for c in caution_ings[:3]]
+            evaluation["reason_codes"].append("ACTIVE_CAUTION")
+            evaluation["reasons"].append(
+                f"Contains {caution_count} caution-grade active ingredient{'s' if caution_count > 1 else ''}: {', '.join(caution_names)}"
+            )
+
         irritation_ingredients = []
         for ing in ingredients:
             ing_name = ing.get("ingredient") or ""
@@ -858,8 +1019,6 @@ class PersonalizationService:
                 evaluation["reason_codes"].append("IRRITATION_RISK")
                 evaluation["reasons"].append(f"{ing_name} carries elevated irritation risk")
                 irritation_ingredients.append(ing_name)
-            elif ir == "moderate":
-                risk_score += 6
         
         # Add reason-specific mitigation for IRRITATION_RISK if any high irritation ingredients found
         if irritation_ingredients and "IRRITATION_RISK" in evaluation["reason_codes"]:
@@ -987,50 +1146,77 @@ class PersonalizationService:
         # ------------------------------------------------------------------
         # 4. DECISION & CONFIDENCE SYNTHESIS
         # ------------------------------------------------------------------
-        if risk_score > 30:
+        is_high_risk = is_high_potency_peel or risk_score >= 15 or caution_count >= 2
+
+        if is_high_risk:
             evaluation["decision"] = "CAUTION"
-            if not evaluation["mitigations"]:
-                evaluation["mitigations"].append("Formula contains multiple moderate-irritation ingredients; patch test recommended")
-        elif risk_score > 15 and fit_score < 15:
+            if evidence_score < 40:
+                evaluation["confidence"] = "low"
+                evaluation["reason_codes"].append("EVIDENCE_INCOMPLETE")
+                evaluation["reasons"].append("Limited scientific research available for some ingredients in this formulation")
+                evaluation["mitigations"].append(
+                    self._generate_reason_specific_mitigation("EVIDENCE_INCOMPLETE", product, user_data, evaluation, ingredients)
+                )
+            else:
+                evaluation["confidence"] = "medium"
+        elif risk_score > 0 and fit_score < 15:
             evaluation["decision"] = "CAUTION"
-            if not evaluation["mitigations"]:
-                evaluation["mitigations"].append("Low profile alignment with elevated risk; introduce gradually")
+            evaluation["confidence"] = "medium"
         elif evidence_score < 40:
             evaluation["decision"] = "CAUTION"
+            evaluation["confidence"] = "low"
             evaluation["reason_codes"].append("EVIDENCE_INCOMPLETE")
             evaluation["reasons"].append("Limited scientific research available for some ingredients in this formulation")
-            # Use reason-specific mitigation for EVIDENCE_INCOMPLETE
             evaluation["mitigations"].append(
                 self._generate_reason_specific_mitigation("EVIDENCE_INCOMPLETE", product, user_data, evaluation, ingredients)
             )
         else:
             evaluation["decision"] = "KEEP"
+            if evidence_score >= 70 and (fit_score >= 20 or risk_score == 0):
+                evaluation["confidence"] = "high"
+            elif evidence_score >= 40 and fit_score >= 10:
+                evaluation["confidence"] = "medium"
+            else:
+                evaluation["confidence"] = "low"
         
-        # Confidence calculation
-        if evidence_score >= 70 and (fit_score >= 20 or risk_score == 0):
-            evaluation["confidence"] = "high"
-        elif evidence_score >= 40 and fit_score >= 10:
-            evaluation["confidence"] = "medium"
-        else:
-            evaluation["confidence"] = "low"
-        
+        # Mitigations
+        if is_high_potency_peel:
+            peel_mitigations = [
+                "Perform a patch test on a small area of the forearm 24-48 hours before facial application.",
+                "Apply to clean, dry skin for a maximum of 10 minutes; rinse thoroughly with lukewarm water (do not leave on).",
+                "Limit usage frequency to no more than 1-2 times weekly, preferably in your evening routine.",
+                "Do not combine with other direct acids (glycolic, salicylic), retinoids, or pure Vitamin C in the same routine.",
+                "Apply broad-spectrum sunscreen (SPF 30+) daily, as AHAs increase skin sensitivity to UV exposure."
+            ]
+            for pm in peel_mitigations:
+                if pm not in evaluation["mitigations"]:
+                    evaluation["mitigations"].append(pm)
+        elif caution_count >= 2 and not evaluation["mitigations"]:
+            evaluation["mitigations"].append("Formula contains multiple moderate-irritation ingredients; patch test recommended before regular use.")
+
         # Expose fit_score for routine product selection
         evaluation["fit_score"] = fit_score
         
         # Store total_parsed for mitigation functions
         evaluation["_total_parsed_ingredients"] = total_parsed
         
-        # Deduplicate entries while preserving order
+        # Prioritize safety & formulation cautions above fit reasons
+        safety_reasons = []
+        fit_reasons = []
+        for r in evaluation["reasons"]:
+            r_low = r.lower()
+            if any(k in r_low for k in ["caution", "contraindicat", "irritat", "peel", "risk", "adverse", "sensitiz", "flare-up", "mismatch"]):
+                safety_reasons.append(r)
+            else:
+                fit_reasons.append(r)
+        
+        evaluation["reasons"] = list(dict.fromkeys(safety_reasons + fit_reasons))
         evaluation["reason_codes"] = list(dict.fromkeys(evaluation["reason_codes"]))
-        evaluation["reasons"] = list(dict.fromkeys(evaluation["reasons"]))
         evaluation["mitigations"] = list(dict.fromkeys(evaluation["mitigations"]))
         
         if not evaluation["reasons"]:
             evaluation["reasons"].append("Product formulation is compatible with your skin profile")
         
-        evaluation["ingredient_evaluations"] = self.evaluate_ingredients_suitability(
-            ingredients, user_data, skin_analysis, product_history
-        )
         return evaluation
     
     def detect_cross_product_interactions(
