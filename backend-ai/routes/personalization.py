@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 import sys
 import os
+import time
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -17,6 +18,17 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.personalization_service import PersonalizationService
 
 router = APIRouter()
+
+# In-memory TTL cache for user personalization analysis to avoid redundant 20s recalculations
+_ANALYSIS_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_CACHE_TTL_SECONDS = 300  # 5 minutes
+
+def invalidate_personalization_cache(user_id: Optional[str] = None):
+    """Invalidates cached personalization for a specific user or all users."""
+    if user_id:
+        _ANALYSIS_CACHE.pop(user_id, None)
+    else:
+        _ANALYSIS_CACHE.clear()
 
 class AddProductRequest(BaseModel):
     product_id: int
@@ -116,6 +128,9 @@ async def update_profile(profile_data: ProfileUpdate, user_id: str = Depends(get
             if not response.data:
                 raise HTTPException(status_code=404, detail="Profile not found or update failed")
             
+            # Invalidate cached personalization
+            invalidate_personalization_cache(user_id)
+
             return {
                 "success": True,
                 "data": response.data[0]
@@ -128,6 +143,9 @@ async def update_profile(profile_data: ProfileUpdate, user_id: str = Depends(get
             if not response.data:
                 raise HTTPException(status_code=500, detail="Failed to create profile")
             
+            # Invalidate cached personalization
+            invalidate_personalization_cache(user_id)
+
             return {
                 "success": True,
                 "data": response.data[0]
@@ -138,17 +156,17 @@ async def update_profile(profile_data: ProfileUpdate, user_id: str = Depends(get
         raise HTTPException(status_code=500, detail=f"Error updating profile: {str(e)}")
 
 @router.post("/personalization/analyze")
-async def analyze_profile(user_id: str = Depends(get_current_user)):
+async def analyze_profile(user_id: str = Depends(get_current_user), force: bool = False):
     """
     Analyze the user's profile for personalization.
-    
-    Returns:
-    - Product evaluations (KEEP/CAUTION/REJECT) with reasons, confidence, and mitigations
-    - AM routine with slots, conflicts, overlaps, and missing steps
-    - PM routine with slots, conflicts, overlaps, and missing steps
-    - Overall confidence level
-    - Combined conflicts and missing steps
+    Uses in-memory TTL caching to avoid re-evaluating 20+ products across Supabase on every page load.
     """
+    now = time.time()
+    if not force and user_id in _ANALYSIS_CACHE:
+        cached_time, cached_result = _ANALYSIS_CACHE[user_id]
+        if now - cached_time < _CACHE_TTL_SECONDS:
+            return cached_result
+
     try:
         # Initialize personalization service
         personalization_service = PersonalizationService()
@@ -163,6 +181,8 @@ async def analyze_profile(user_id: str = Depends(get_current_user)):
                 "message": "Could not analyze user profile"
             }
         
+        # Cache successful analysis
+        _ANALYSIS_CACHE[user_id] = (now, result)
         return result
         
     except HTTPException:
@@ -243,6 +263,9 @@ async def add_product(product_data: AddProductRequest, user_id: str = Depends(ge
         if not response.data:
             raise HTTPException(status_code=500, detail="Failed to add product to history")
         
+        # Invalidate cached personalization
+        invalidate_personalization_cache(user_id)
+
         return {
             "success": True,
             "message": "Product added to routine successfully",

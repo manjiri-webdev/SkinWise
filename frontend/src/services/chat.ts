@@ -1,6 +1,5 @@
 import { supabase } from "@/lib/supabase";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_AI_BACKEND_URL || "http://localhost:8000";
+import { AI_BACKEND_URL, joinApiUrl } from "@/lib/api";
 
 export interface CurrentProductContext {
   product_name?: string;
@@ -80,7 +79,7 @@ export async function sendChatMessage(
     payload.current_product = currentProduct;
   }
 
-  const response = await fetch(`${API_BASE_URL}/chat`, {
+  const response = await fetch(joinApiUrl(AI_BACKEND_URL, "/chat"), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,

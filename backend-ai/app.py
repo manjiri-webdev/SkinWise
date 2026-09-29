@@ -14,7 +14,7 @@ import supabase_config
 from auth_utils import get_current_user
 from image_validation.pipeline import run_image_validation
 from routes.validation import router as validation_router
-from routes.personalization import router as personalization_router
+from routes.personalization import router as personalization_router, invalidate_personalization_cache
 from routes.history import router as history_router
 from routes.chat import router as chat_router
 from detection.detect import detect_acne
@@ -83,6 +83,11 @@ def home():
     return {"message": "Welcome to SkinWise AI Backend!"}
 
 
+@app.get("/health")
+def health():
+    return {"status": "healthy", "service": "SkinWise AI Backend"}
+
+
 
 @app.post("/upload", response_model=UploadResponse)
 def upload_image(file: UploadFile = File(...), user_id: str = Depends(get_current_user), is_file_upload: bool = Form(False)):
@@ -132,6 +137,8 @@ def upload_image(file: UploadFile = File(...), user_id: str = Depends(get_curren
         }
         
         supabase_config.supabase.table("skin_analyses").insert(analysis_record).execute()
+        # Invalidate cached personalization so dashboard recomputes recommendations for new skin analysis
+        invalidate_personalization_cache(user_id)
     except Exception as db_error:
         print(f"Failed to persist analysis results: {str(db_error)}")
         # Continue without failing the upload if database insert fails

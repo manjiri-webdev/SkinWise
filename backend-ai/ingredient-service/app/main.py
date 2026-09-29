@@ -82,6 +82,13 @@ def root():
         "service": "SkinWise Product & Ingredient Service"
     }
 
+@app.get("/health")
+def health():
+    return {
+        "status": "healthy",
+        "service": "SkinWise Product & Ingredient Service"
+    }
+
 @app.get("/product/search")
 def search_product(
     product_name: str,

@@ -1,6 +1,5 @@
 import type { ProductDiscoverRequest, ProductDiscoverResponse, ProductExtractionRequest, ProductExtractionResponse, ProductAnalysisRequest, ProductAnalysisResponse } from "@/types/product";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_INGREDIENT_SERVICE_URL ?? "http://localhost:8001";
+import { INGREDIENT_SERVICE_URL, joinApiUrl } from "@/lib/api";
 
 function getErrorMessage(payload: unknown): string {
   if (typeof payload !== "object" || payload === null || !("detail" in payload)) {
@@ -22,7 +21,7 @@ function getErrorMessage(payload: unknown): string {
 export async function discoverProducts(
   request: ProductDiscoverRequest,
 ): Promise<ProductDiscoverResponse> {
-  const response = await fetch(`${API_BASE_URL}/product/discover`, {
+  const response = await fetch(joinApiUrl(INGREDIENT_SERVICE_URL, "/product/discover"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
@@ -40,7 +39,7 @@ export async function discoverProducts(
 export async function extractProductDetails(
   request: ProductExtractionRequest,
 ): Promise<ProductExtractionResponse> {
-  const response = await fetch(`${API_BASE_URL}/product/extract`, {
+  const response = await fetch(joinApiUrl(INGREDIENT_SERVICE_URL, "/product/extract"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
@@ -58,7 +57,7 @@ export async function extractProductDetails(
 export async function analyzeProduct(
   request: ProductAnalysisRequest,
 ): Promise<ProductAnalysisResponse> {
-  const response = await fetch(`${API_BASE_URL}/product/analyze`, {
+  const response = await fetch(joinApiUrl(INGREDIENT_SERVICE_URL, "/product/analyze"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),

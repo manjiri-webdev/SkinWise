@@ -70,6 +70,22 @@ export default function Dashboard() {
   const channelRef = useRef<any>(null);
 
   useEffect(() => {
+    // 1. Instant cache retrieval for 0ms dashboard population
+    try {
+      const cachedPers = sessionStorage.getItem("skinwise_cached_personalization");
+      if (cachedPers) {
+        const parsed = JSON.parse(cachedPers);
+        setPersonalization(parsed);
+        setLoading(false);
+      }
+      const cachedProfile = sessionStorage.getItem("skinwise_cached_user_profile");
+      if (cachedProfile) {
+        setUserProfile(JSON.parse(cachedProfile));
+      }
+    } catch (e) {
+      console.warn("Could not read dashboard cache:", e);
+    }
+
     loadInitialData();
     setupRealtimeSubscriptions();
 
@@ -94,46 +110,58 @@ export default function Dashboard() {
 
   const loadInitialData = async () => {
     try {
-      setLoading(true);
       setError(null);
 
-      // 1. Fetch current authenticated user
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (user) {
-        setUserId(user.id);
-        const fullName =
-          user.user_metadata?.full_name || user.user_metadata?.name;
-        if (fullName) {
-          setUserName(fullName.split(" ")[0]);
-        } else if (user.email) {
-          const emailPrefix = user.email.split("@")[0];
-          setUserName(emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1));
+      // Concurrently fetch user, profile, and personalization analysis in parallel
+      const userPromise = supabase.auth.getUser().then(({ data: { user } }) => {
+        if (user) {
+          setUserId(user.id);
+          const fullName =
+            user.user_metadata?.full_name || user.user_metadata?.name;
+          if (fullName) {
+            setUserName(fullName.split(" ")[0]);
+          } else if (user.email) {
+            const emailPrefix = user.email.split("@")[0];
+            setUserName(emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1));
+          }
         }
-      }
+        return user;
+      });
 
-      // 2. Fetch user profile
-      try {
-        const profileRes = await getProfile();
-        if (profileRes.success && profileRes.data) {
+      const profilePromise = getProfile().then((profileRes) => {
+        if (profileRes?.success && profileRes?.data) {
           setUserProfile(profileRes.data);
+          try {
+            sessionStorage.setItem("skinwise_cached_user_profile", JSON.stringify(profileRes.data));
+          } catch (e) {}
         }
-      } catch (err) {
+        return profileRes;
+      }).catch((err) => {
         console.warn("Could not load user profile:", err);
-      }
+        return null;
+      });
 
-      // 3. Fetch real personalization analysis (evaluated products, AM/PM routine, missing steps)
-      const persResult = await analyzeProfile();
-      if (persResult.success) {
-        setPersonalization(persResult);
-      } else {
-        console.warn("Personalization analysis returned unsuccessful status:", persResult);
-      }
+      const persPromise = analyzeProfile().then((persResult) => {
+        if (persResult?.success) {
+          setPersonalization(persResult);
+          try {
+            sessionStorage.setItem("skinwise_cached_personalization", JSON.stringify(persResult));
+          } catch (e) {}
+        } else {
+          console.warn("Personalization returned unsuccessful status:", persResult);
+        }
+        return persResult;
+      }).catch((err) => {
+        console.error("Personalization fetch failed:", err);
+        throw err;
+      });
+
+      await Promise.allSettled([userPromise, profilePromise, persPromise]);
     } catch (err: any) {
       console.error("Error loading dashboard data:", err);
-      setError("Failed to load dashboard data. Please try again.");
+      if (!sessionStorage.getItem("skinwise_cached_personalization")) {
+        setError("Failed to load dashboard data. Please try again.");
+      }
     } finally {
       setLoading(false);
     }
@@ -271,27 +299,24 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* Loading and Error states */}
-      {loading ? (
-        <div className="w-full py-20 flex flex-col items-center justify-center text-center">
-          <Loader2 className="animate-spin text-[#DE688E] mb-3" size={36} />
-          <p className="text-sm font-semibold text-[#6B6375]">Loading your personalized dashboard...</p>
-        </div>
-      ) : error ? (
-        <div className="w-full p-6 bg-red-50/80 border border-red-200/60 rounded-3xl text-center">
-          <AlertCircle className="text-red-500 mx-auto mb-2" size={32} />
-          <p className="text-sm font-semibold text-red-700">{error}</p>
+      {/* Non-blocking Error Banner */}
+      {error && !personalization && (
+        <div className="w-full p-4 bg-red-50/90 border border-red-200 rounded-2xl flex items-center justify-between text-xs text-red-700">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="text-red-500 shrink-0" size={18} />
+            <span>{error}</span>
+          </div>
           <button
             onClick={loadInitialData}
-            className="mt-3 px-5 py-2 bg-white text-xs font-bold text-red-600 rounded-full border border-red-200 hover:bg-red-50 transition cursor-pointer"
+            className="px-3 py-1 bg-white text-xs font-bold text-red-600 rounded-full border border-red-200 hover:bg-red-50 transition cursor-pointer"
           >
             Retry
           </button>
         </div>
-      ) : (
-        <>
-          {/* Upper Section: Product Safety Watchlist & Recommendations */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-stretch">
+      )}
+
+      {/* Upper Section: Product Safety Watchlist & Recommendations */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-stretch">
             {/* 1. Product Safety Watchlist */}
             <div className="watchlist-card lg:col-span-5 p-4 sm:p-6 lg:p-7 flex flex-col justify-between">
               <div>
@@ -306,9 +331,15 @@ export default function Dashboard() {
                     : "No products currently flagged"}
                 </p>
 
-                {/* Flagged items list or clean empty state */}
+                {/* Flagged items list, loading skeleton, or clean empty state */}
                 <div className="mt-5 space-y-3">
-                  {flaggedProducts.length > 0 ? (
+                  {loading && !personalization ? (
+                    <div className="bg-white/80 rounded-2xl p-6 border border-white flex flex-col items-center justify-center text-center animate-pulse min-h-[140px]">
+                      <Loader2 className="animate-spin text-[#DE688E] mb-2" size={24} />
+                      <p className="text-xs font-semibold text-[#6B6375]">Evaluating product safety...</p>
+                      <p className="text-[11px] text-[#9A9393] mt-1">Cross-referencing ingredients with your profile</p>
+                    </div>
+                  ) : flaggedProducts.length > 0 ? (
                     flaggedProducts.map((product, index) => {
                       const decision = product.evaluation?.decision || "CAUTION";
                       const isReject = decision === "REJECT";
@@ -447,8 +478,16 @@ export default function Dashboard() {
                   Personalized recommendation for your current skin needs.
                 </p>
 
-                {/* Render recommendations or empty state */}
-                {personalization?.recommendations && Object.values(personalization.recommendations).some((recs: any) => recs && recs.length > 0) ? (
+                {/* Render recommendations, loading skeleton, or empty state */}
+                {loading && !personalization ? (
+                  <div className="mt-5 space-y-3">
+                    <div className="bg-white/80 rounded-2xl p-6 border border-white flex flex-col items-center justify-center text-center animate-pulse min-h-[140px]">
+                      <Sparkles className="text-[#DE688E] animate-pulse mb-2" size={24} />
+                      <p className="text-xs font-semibold text-[#6B6375]">Loading personalized recommendations...</p>
+                      <p className="text-[11px] text-[#9A9393] mt-1">Finding safe product matches for missing routine steps</p>
+                    </div>
+                  </div>
+                ) : personalization?.recommendations && Object.values(personalization.recommendations).some((recs: any) => recs && recs.length > 0) ? (
                   <div className="mt-5 space-y-4">
                     {Object.entries(personalization.recommendations).map(([category, recs]) => {
                       const categoryRecommendations = recs as Recommendation[];
@@ -648,7 +687,37 @@ export default function Dashboard() {
 
             {/* Horizontal Grid of Routine Step Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {currentRoutineSteps.map((step) => {
+              {loading && !personalization ? (
+                [
+                  { num: 1, label: "Cleanser" },
+                  { num: 2, label: "Serum" },
+                  { num: 3, label: "Moisturizer" },
+                  { num: 4, label: "Sunscreen" },
+                ].map((s) => (
+                  <div
+                    key={`routine-skeleton-${s.num}`}
+                    className="routine-step-card p-4 border border-dashed border-gray-200 bg-white/70 animate-pulse flex flex-col justify-between min-h-[140px]"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2 mb-2.5">
+                        <span className="w-5 h-5 rounded-full bg-gray-200 text-gray-400 text-[11px] font-bold flex items-center justify-center">
+                          {s.num}
+                        </span>
+                        <span className="text-xs font-bold text-gray-400">{s.num}. {s.label}</span>
+                      </div>
+                      <div className="flex items-start gap-3 mt-2">
+                        <div className="w-12 h-14 bg-gray-100 rounded-lg shrink-0" />
+                        <div className="flex-1 space-y-1.5 mt-1">
+                          <div className="h-3 bg-gray-200 rounded w-20" />
+                          <div className="h-2.5 bg-gray-100 rounded w-28" />
+                        </div>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-gray-400 mt-3">Loading your personalized routine...</p>
+                  </div>
+                ))
+              ) : (
+                currentRoutineSteps.map((step) => {
                 const product = step.product;
                 const isCompleted = !!completedSteps[step.id];
 
@@ -758,7 +827,8 @@ export default function Dashboard() {
                     </p>
                   </div>
                 );
-              })}
+              })
+            )}
             </div>
           </div>
 
@@ -781,8 +851,6 @@ export default function Dashboard() {
               </div>
             </div>
           )}
-        </>
-      )}
     </div>
   );
 }

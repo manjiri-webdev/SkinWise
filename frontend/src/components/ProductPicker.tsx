@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { X, Package, AlertTriangle, ShieldCheck, Plus } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { AI_BACKEND_URL, joinApiUrl } from "@/lib/api";
 
 interface ProductEvaluation {
   decision: "KEEP" | "CAUTION" | "REJECT";
@@ -58,7 +59,7 @@ export default function ProductPicker({
       if (!session?.access_token) return;
 
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_AI_BACKEND_URL || "http://localhost:8000"}/personalization/products/${category}`,
+        joinApiUrl(AI_BACKEND_URL, `/personalization/products/${category}`),
         {
           method: "GET",
           headers: {
@@ -94,7 +95,7 @@ export default function ProductPicker({
       if (!session?.access_token) return;
 
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_AI_BACKEND_URL || "http://localhost:8000"}/personalization/add-product`,
+        joinApiUrl(AI_BACKEND_URL, "/personalization/add-product"),
         {
           method: "POST",
           headers: {

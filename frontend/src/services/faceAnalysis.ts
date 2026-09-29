@@ -3,8 +3,7 @@
 // Add it to .env.local: NEXT_PUBLIC_AI_BACKEND_URL=http://localhost:8000
 
 import { supabase } from "@/lib/supabase";
-
-const AI_BACKEND_URL = process.env.NEXT_PUBLIC_AI_BACKEND_URL || 'http://localhost:8000';
+import { AI_BACKEND_URL, joinApiUrl } from "@/lib/api";
 
 async function getAuthToken(): Promise<string> {
   const { data: { session } } = await supabase.auth.getSession();
@@ -60,7 +59,7 @@ export async function uploadFaceImage(file: File, isFileUpload: boolean = false)
 
   const token = await getAuthToken();
 
-  const response = await fetch(`${AI_BACKEND_URL}/upload`, {
+  const response = await fetch(joinApiUrl(AI_BACKEND_URL, "/upload"), {
     method: "POST",
     body: formData,
     headers: {
@@ -174,7 +173,7 @@ export async function validateLiveFrame(file: File): Promise<BackendValidationRe
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${AI_BACKEND_URL}/validate-live`, {
+  const response = await fetch(joinApiUrl(AI_BACKEND_URL, "/validate-live"), {
     method: "POST",
     body: formData,
   });

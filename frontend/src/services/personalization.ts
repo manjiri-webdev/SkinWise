@@ -1,6 +1,5 @@
 import { supabase } from "@/lib/supabase";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_AI_BACKEND_URL || "http://localhost:8000";
+import { AI_BACKEND_URL, joinApiUrl } from "@/lib/api";
 
 async function getAuthToken(): Promise<string> {
   const { data: { session } } = await supabase.auth.getSession();
@@ -12,8 +11,9 @@ async function getAuthToken(): Promise<string> {
 
 async function apiCall(endpoint: string, options: RequestInit = {}) {
   const token = await getAuthToken();
+  const url = joinApiUrl(AI_BACKEND_URL, endpoint);
   
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+  const response = await fetch(url, {
     ...options,
     headers: {
       ...options.headers,
@@ -124,6 +124,32 @@ export interface LatestAnalysisResponse {
 }
 
 export async function getProfile(): Promise<ProfileResponse> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user?.id) {
+      const { data, error } = await supabase
+        .from("user_profiles")
+        .select("*")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (!error && data) {
+        return {
+          success: true,
+          data: data as UserProfile,
+          exists: true,
+        };
+      } else if (!error && !data) {
+        return {
+          success: true,
+          data: null,
+          exists: false,
+        };
+      }
+    }
+  } catch (supabaseErr) {
+    console.warn("Direct Supabase profile fetch fallback to API:", supabaseErr);
+  }
   return apiCall("/personalization/profile");
 }
 

@@ -100,11 +100,14 @@ export default function FaceAnalysis() {
   const [validation, setValidation] = useState<ValidationState>(initialValidationState);
   const [isValidating, setIsValidating] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
+  const [backendWarmingUp, setBackendWarmingUp] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isValidatingRef = useRef(false);
+  const consecutiveErrorsRef = useRef(0);
   const router = useRouter();
 
   useEffect(() => {
@@ -204,117 +207,170 @@ export default function FaceAnalysis() {
     }
   };
 
-  // Live frame validation interval
+  // Live frame validation loop with chained timeout, concurrency lock, and cold-start backoff
   useEffect(() => {
-    let validationInterval: NodeJS.Timeout | null = null;
+    let timerId: NodeJS.Timeout | null = null;
+    let isCancelled = false;
 
-    if (flowStep === "live" && isValidating) {
-      validationInterval = setInterval(async () => {
-        if (!videoRef.current || !canvasRef.current) return;
-
-        try {
-          const video = videoRef.current;
-          const canvas = canvasRef.current;
-
-          canvas.width = video.videoWidth || 640;
-          canvas.height = video.videoHeight || 480;
-
-          const ctx = canvas.getContext("2d");
-          if (!ctx) return;
-
-          // Mirror image for canvas frame
-          ctx.translate(canvas.width, 0);
-          ctx.scale(-1, 1);
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-          canvas.toBlob(
-            async (blob) => {
-              if (!blob) return;
-
-              const file = new File([blob], "live-frame.jpg", { type: "image/jpeg" });
-
-              try {
-                const backendValidation = await validateLiveFrame(file);
-                const frontendValidation = convertBackendValidation(backendValidation);
-
-                const blurCheck = (backendValidation.validation as any)?.blur;
-                const imageClarityStatus: ValidationStatus = blurCheck?.status
-                  ? (blurCheck.status as ValidationStatus)
-                  : frontendValidation.brightness.status === "passed"
-                  ? "passed"
-                  : "warning";
-
-                const imageClarityMessage =
-                  blurCheck?.message ||
-                  (imageClarityStatus === "passed"
-                    ? "Image is clear"
-                    : "Hold still for sharpest focus");
-
-                setValidation({
-                  faceDetected: {
-                    id: "faceDetected",
-                    label: "Face Detected",
-                    status: frontendValidation.faceDetected.status,
-                    message:
-                      frontendValidation.faceDetected.status === "passed"
-                        ? "Successfully detected"
-                        : frontendValidation.faceDetected.message,
-                  },
-                  singleFace: {
-                    id: "singleFace",
-                    label: "Single Face",
-                    status: frontendValidation.singleFace.status,
-                    message:
-                      frontendValidation.singleFace.status === "passed"
-                        ? "confirmed"
-                        : frontendValidation.singleFace.message,
-                  },
-                  brightness: {
-                    id: "brightness",
-                    label: "Lighting",
-                    status: frontendValidation.brightness.status,
-                    message:
-                      frontendValidation.brightness.status === "passed"
-                        ? "Good lighting"
-                        : frontendValidation.brightness.message || "move to brighter place",
-                  },
-                  faceOrientation: {
-                    id: "faceOrientation",
-                    label: "Face Position",
-                    status: frontendValidation.faceOrientation.status,
-                    message:
-                      frontendValidation.faceOrientation.status === "passed"
-                        ? "look straight into camera"
-                        : frontendValidation.faceOrientation.message || "look straight into camera",
-                  },
-                  imageClarity: {
-                    id: "imageClarity",
-                    label: "Image Clarity",
-                    status: imageClarityStatus,
-                    message: imageClarityMessage,
-                  },
-                  readyForAnalysis: frontendValidation.readyForAnalysis,
-                  facePositionGuidance:
-                    frontendValidation.facePositionGuidance ||
-                    "Keep your face centered in the oval guide.",
-                });
-              } catch (error) {
-                console.error("Live validation error:", error);
-              }
-            },
-            "image/jpeg",
-            0.5
-          );
-        } catch (error) {
-          console.error("Frame capture error:", error);
-        }
-      }, 2000);
+    if (flowStep !== "live" || !isValidating) {
+      isValidatingRef.current = false;
+      return;
     }
 
-    return () => {
-      if (validationInterval) {
-        clearInterval(validationInterval);
+    const validateLoop = async () => {
+      if (isCancelled) return;
+
+      if (!videoRef.current || !canvasRef.current || isValidatingRef.current) {
+        if (!isCancelled) {
+          timerId = setTimeout(validateLoop, 2000);
+        }
+        return;
       }
+
+      isValidatingRef.current = true;
+
+      try {
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+
+        if (!video.videoWidth || !video.videoHeight) {
+          isValidatingRef.current = false;
+          if (!isCancelled) {
+            timerId = setTimeout(validateLoop, 1500);
+          }
+          return;
+        }
+
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          isValidatingRef.current = false;
+          if (!isCancelled) {
+            timerId = setTimeout(validateLoop, 2000);
+          }
+          return;
+        }
+
+        // Mirror image for canvas frame
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const blob = await new Promise<Blob | null>((resolve) =>
+          canvas.toBlob(resolve, "image/jpeg", 0.5)
+        );
+
+        if (!blob || isCancelled) {
+          isValidatingRef.current = false;
+          if (!isCancelled) {
+            timerId = setTimeout(validateLoop, 2000);
+          }
+          return;
+        }
+
+        const file = new File([blob], "live-frame.jpg", { type: "image/jpeg" });
+
+        try {
+          const backendValidation = await validateLiveFrame(file);
+          if (isCancelled) return;
+
+          // Successful validation: reset error count and warming-up indicator
+          consecutiveErrorsRef.current = 0;
+          setBackendWarmingUp(false);
+
+          const frontendValidation = convertBackendValidation(backendValidation);
+
+          const blurCheck = (backendValidation.validation as any)?.blur;
+          const imageClarityStatus: ValidationStatus = blurCheck?.status
+            ? (blurCheck.status as ValidationStatus)
+            : frontendValidation.brightness.status === "passed"
+            ? "passed"
+            : "warning";
+
+          const imageClarityMessage =
+            blurCheck?.message ||
+            (imageClarityStatus === "passed"
+              ? "Image is clear"
+              : "Hold still for sharpest focus");
+
+          setValidation({
+            faceDetected: {
+              id: "faceDetected",
+              label: "Face Detected",
+              status: frontendValidation.faceDetected.status,
+              message:
+                frontendValidation.faceDetected.status === "passed"
+                  ? "Successfully detected"
+                  : frontendValidation.faceDetected.message,
+            },
+            singleFace: {
+              id: "singleFace",
+              label: "Single Face",
+              status: frontendValidation.singleFace.status,
+              message:
+                frontendValidation.singleFace.status === "passed"
+                  ? "confirmed"
+                  : frontendValidation.singleFace.message,
+            },
+            brightness: {
+              id: "brightness",
+              label: "Lighting",
+              status: frontendValidation.brightness.status,
+              message:
+                frontendValidation.brightness.status === "passed"
+                  ? "Good lighting"
+                  : frontendValidation.brightness.message || "move to brighter place",
+            },
+            faceOrientation: {
+              id: "faceOrientation",
+              label: "Face Position",
+              status: frontendValidation.faceOrientation.status,
+              message:
+                frontendValidation.faceOrientation.status === "passed"
+                  ? "look straight into camera"
+                  : frontendValidation.faceOrientation.message || "look straight into camera",
+            },
+            imageClarity: {
+              id: "imageClarity",
+              label: "Image Clarity",
+              status: imageClarityStatus,
+              message: imageClarityMessage,
+            },
+            readyForAnalysis: frontendValidation.readyForAnalysis,
+            facePositionGuidance:
+              frontendValidation.facePositionGuidance ||
+              "Keep your face centered in the oval guide.",
+          });
+        } catch (validationErr) {
+          consecutiveErrorsRef.current += 1;
+          if (consecutiveErrorsRef.current >= 2) {
+            setBackendWarmingUp(true);
+          }
+          if (consecutiveErrorsRef.current === 1) {
+            console.warn("Live validation service is warming up or delayed:", validationErr);
+          }
+        }
+      } catch (error) {
+        console.error("Frame capture error:", error);
+      } finally {
+        isValidatingRef.current = false;
+        if (!isCancelled) {
+          const delay = consecutiveErrorsRef.current >= 2 ? 4000 : 2000;
+          timerId = setTimeout(validateLoop, delay);
+        }
+      }
+    };
+
+    timerId = setTimeout(validateLoop, 800);
+
+    return () => {
+      isCancelled = true;
+      if (timerId) {
+        clearTimeout(timerId);
+      }
+      isValidatingRef.current = false;
     };
   }, [flowStep, isValidating]);
 
@@ -578,6 +634,13 @@ export default function FaceAnalysis() {
                   </h2>
                 </div>
 
+                {backendWarmingUp && (
+                  <div className="mb-3.5 p-2.5 bg-amber-50/90 border border-amber-200/80 rounded-xl text-[11px] text-amber-800 leading-snug flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin text-amber-600 shrink-0" />
+                    <span>AI vision service is warming up... hold steady</span>
+                  </div>
+                )}
+
                 <div className="space-y-3.5">
                   {validationChecksList.map((check) => (
                     <div key={check.id} className="flex items-start gap-3">
@@ -771,7 +834,9 @@ export default function FaceAnalysis() {
               {/* Guidance Badge Overlay */}
               <div className="relative z-20 w-full pt-4 flex justify-center pointer-events-none px-4">
                 <span className="bg-black/60 backdrop-blur-md text-white text-[11px] sm:text-xs px-4 py-1.5 rounded-full border border-white/20 shadow-md">
-                  {validation.facePositionGuidance}
+                  {backendWarmingUp
+                    ? "AI vision service is warming up. Please hold steady..."
+                    : validation.facePositionGuidance}
                 </span>
               </div>
 
@@ -806,16 +871,17 @@ export default function FaceAnalysis() {
                 {/* Centered Shutter Button */}
                 <button
                   type="button"
-                  disabled={!validation.readyForAnalysis || flowStep === "capturing"}
+                  disabled={(!validation.readyForAnalysis && !backendWarmingUp) || flowStep === "capturing"}
                   onClick={captureAndUpload}
                   className="shutter-outer-ring p-1.5 flex items-center justify-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={backendWarmingUp ? "Capture photo (AI vision is warming up)" : "Capture photo"}
                 >
                   {flowStep === "capturing" ? (
                     <Loader2 className="animate-spin text-white" size={28} />
                   ) : (
                     <div
                       className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full transition-transform ${
-                        validation.readyForAnalysis
+                        validation.readyForAnalysis || backendWarmingUp
                           ? "bg-gradient-to-r from-[#F9BAC8] to-[#EE8EA3] shadow-[0_4px_16px_rgba(238,142,163,0.5)]"
                           : "bg-gradient-to-r from-[#F9BAC8]/60 to-[#EE8EA3]/60"
                       }`}
