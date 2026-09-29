@@ -13,19 +13,48 @@ async function apiCall(endpoint: string, options: RequestInit = {}) {
   const token = await getAuthToken();
   const url = joinApiUrl(AI_BACKEND_URL, endpoint);
   
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      ...options.headers,
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-  });
+  let response: Response | null = null;
+  const maxAttempts = 3;
 
-  if (!response.ok) {
-    const error = await response.json();
-    console.error(`API Error (${response.status}):`, error);
-    const errorMessage = error.detail || error.message || JSON.stringify(error) || "API request failed";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers: {
+          ...options.headers,
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if ([502, 503, 504].includes(response.status)) {
+        console.warn(`apiCall (${endpoint}) received ${response.status}. Retrying in ${attempt * 2}s...`);
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, attempt * 2000));
+          continue;
+        }
+      }
+      break;
+    } catch (err: any) {
+      console.warn(`apiCall (${endpoint}) network error attempt ${attempt}:`, err);
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, attempt * 2000));
+      } else {
+        throw new Error("Unable to connect to AI server. It may be waking up—please try again shortly.");
+      }
+    }
+  }
+
+  if (!response || !response.ok) {
+    let errorMessage = "API request failed";
+    if (response) {
+      try {
+        const error = await response.json();
+        errorMessage = error.detail || error.message || JSON.stringify(error) || `API error ${response.status}`;
+      } catch {
+        errorMessage = `API error ${response.status}`;
+      }
+    }
     throw new Error(errorMessage);
   }
 
@@ -154,6 +183,27 @@ export async function getProfile(): Promise<ProfileResponse> {
 }
 
 export async function updateProfile(profileData: Partial<UserProfile>): Promise<ProfileResponse> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user?.id) {
+      const { data, error } = await supabase
+        .from("user_profiles")
+        .update(profileData)
+        .eq("id", user.id)
+        .select()
+        .single();
+      if (!error && data) {
+        return {
+          success: true,
+          data: data as UserProfile,
+          exists: true,
+        };
+      }
+    }
+  } catch (supabaseErr) {
+    console.warn("Direct Supabase profile update fallback to API:", supabaseErr);
+  }
+
   return apiCall("/personalization/profile", {
     method: "POST",
     body: JSON.stringify(profileData),

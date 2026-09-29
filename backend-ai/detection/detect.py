@@ -8,7 +8,8 @@ def detect_acne(image):
     results = yolo_model.predict(
         source=image,
         conf=conf_thresh,
-        verbose=True
+        imgsz=640,
+        verbose=False
     )
 
     return parse_yolo_results(results)

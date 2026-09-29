@@ -26,10 +26,16 @@ def detect_faces(image: np.ndarray) -> Optional[Dict[str, Any]]:
     detection = results.detections[0]
     rel_box = detection.location_data.relative_bounding_box
 
-    x1 = int(rel_box.xmin * image_width)
-    y1 = int(rel_box.ymin * image_height)
-    width = int(rel_box.width * image_width)
-    height = int(rel_box.height * image_height)
+    x1 = max(0, int(rel_box.xmin * image_width))
+    y1 = max(0, int(rel_box.ymin * image_height))
+    width = min(image_width - x1, int(rel_box.width * image_width))
+    height = min(image_height - y1, int(rel_box.height * image_height))
+
+    # Extract all 6 relative keypoints (0: RIGHT_EYE, 1: LEFT_EYE, 2: NOSE_TIP, 3: MOUTH_CENTER, 4: RIGHT_EAR, 5: LEFT_EAR)
+    keypoints = []
+    if hasattr(detection.location_data, "relative_keypoints"):
+        for kp in detection.location_data.relative_keypoints:
+            keypoints.append({"x": float(kp.x), "y": float(kp.y)})
 
     return {
         "face_detected": True,
@@ -45,4 +51,5 @@ def detect_faces(image: np.ndarray) -> Optional[Dict[str, Any]]:
         "confidence": round(float(detection.score[0]), 3),
         "image_width": image_width,
         "image_height": image_height,
+        "keypoints": keypoints,
     }

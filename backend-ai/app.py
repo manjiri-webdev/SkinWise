@@ -54,6 +54,7 @@ class NormalizePathMiddleware:
         await self.app(scope, receive, send)
 
 app = FastAPI()
+app.add_middleware(NormalizePathMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -63,7 +64,19 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
-app.add_middleware(NormalizePathMiddleware)
+
+from fastapi.responses import JSONResponse
+from starlette.requests import Request
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal error occurred on the AI vision server. Please try again shortly."},
+    )
+
 app.include_router(validation_router)
 app.include_router(personalization_router)
 app.include_router(history_router)
@@ -104,10 +117,10 @@ def upload_image(file: UploadFile = File(...), user_id: str = Depends(get_curren
     if image is None:
         raise HTTPException(status_code=400, detail="Unable to decode image. Unsupported format or corrupt data.")
 
-    # Downscale massive images (e.g. 12MP phone photos) to standard max dimension 1280px
-    # Prevents Render CPU thrashing and Out-Of-Memory container kills
+    # Downscale massive images (e.g. 12MP phone photos) to standard max dimension 960px
+    # Prevents Render CPU thrashing and Out-Of-Memory container kills while preserving lesion clarity
     h, w = image.shape[:2]
-    max_dim = 1280
+    max_dim = 960
     if max(h, w) > max_dim:
         scale = max_dim / float(max(h, w))
         image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)

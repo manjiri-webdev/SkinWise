@@ -871,7 +871,12 @@ export default function FaceAnalysis() {
                 {/* Centered Shutter Button */}
                 <button
                   type="button"
-                  disabled={(!validation.readyForAnalysis && !backendWarmingUp) || flowStep === "capturing"}
+                  disabled={
+                    (!validation.readyForAnalysis &&
+                      validation.faceDetected.status !== "passed" &&
+                      !backendWarmingUp) ||
+                    flowStep === "capturing"
+                  }
                   onClick={captureAndUpload}
                   className="shutter-outer-ring p-1.5 flex items-center justify-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   title={backendWarmingUp ? "Capture photo (AI vision is warming up)" : "Capture photo"}
@@ -881,7 +886,9 @@ export default function FaceAnalysis() {
                   ) : (
                     <div
                       className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full transition-transform ${
-                        validation.readyForAnalysis || backendWarmingUp
+                        validation.readyForAnalysis ||
+                        validation.faceDetected.status === "passed" ||
+                        backendWarmingUp
                           ? "bg-gradient-to-r from-[#F9BAC8] to-[#EE8EA3] shadow-[0_4px_16px_rgba(238,142,163,0.5)]"
                           : "bg-gradient-to-r from-[#F9BAC8]/60 to-[#EE8EA3]/60"
                       }`}

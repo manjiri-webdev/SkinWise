@@ -1,9 +1,13 @@
 import "./globals.css";
+import { ServerWarmup } from "@/components/ServerWarmup";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <ServerWarmup />
+        {children}
+      </body>
     </html>
   );
 }

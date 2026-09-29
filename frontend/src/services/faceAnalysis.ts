@@ -60,52 +60,50 @@ export async function uploadFaceImage(file: File, isFileUpload: boolean = false)
   const token = await getAuthToken();
   const uploadUrl = joinApiUrl(AI_BACKEND_URL, "/upload");
 
-  let response: Response;
-  try {
-    response = await fetch(uploadUrl, {
-      method: "POST",
-      body: formData,
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+  const maxAttempts = 3;
 
-    // If Render was cold and returned 502/503/504, wait 2.5s and retry once
-    if ([502, 503, 504].includes(response.status)) {
-      console.warn(`Upload received ${response.status} from backend. Retrying once after warm-up...`);
-      await new Promise((r) => setTimeout(r, 2500));
-      response = await fetch(uploadUrl, {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await fetch(uploadUrl, {
         method: "POST",
         body: formData,
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
-    }
-  } catch (netErr: any) {
-    console.warn("Upload fetch network error, retrying once in 2.5s...", netErr);
-    await new Promise((r) => setTimeout(r, 2500));
-    response = await fetch(uploadUrl, {
-      method: "POST",
-      body: formData,
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-  }
 
-  if (!response.ok) {
-    let errorDetail = `Upload failed with status ${response.status}`;
-    try {
-      const errJson = await response.json();
-      if (errJson && errJson.detail) {
-        errorDetail = errJson.detail;
+      // If Render was cold or waking up (502, 503, 504), wait and retry
+      if ([502, 503, 504].includes(response.status)) {
+        console.warn(`Upload attempt ${attempt} received ${response.status} from backend. Retrying after warm-up...`);
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, attempt * 2500));
+          continue;
+        }
       }
-    } catch {}
-    throw new Error(errorDetail);
+
+      if (!response.ok) {
+        let errorDetail = `Upload failed with status ${response.status}`;
+        try {
+          const errJson = await response.json();
+          if (errJson && errJson.detail) {
+            errorDetail = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
+          }
+        } catch {}
+        throw new Error(errorDetail);
+      }
+
+      return await response.json();
+    } catch (netErr: any) {
+      console.warn(`Upload attempt ${attempt} network error:`, netErr);
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, attempt * 2500));
+      }
+    }
   }
 
-  return response.json();
+  throw new Error(
+    "The AI vision server is currently waking up or experiencing high traffic. Please wait a few seconds and try again."
+  );
 }
 
 // Convert backend validation response to frontend validation state

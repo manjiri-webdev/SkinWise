@@ -20,44 +20,27 @@ def run_image_validation(image_input: Any, skip_position_check: bool = False) ->
             "error": "Unable to read image. The file may be corrupted or in an unsupported format.",
         }
 
-    blur_result = validate_blur(image)
-    brightness_result = validate_brightness(image)
-    face_result = validate_face(image)
-    orientation_result = validate_face_orientation(image)
-
-    print(f"DEBUG run_image_validation: blur_result={blur_result}")
-    print(f"DEBUG run_image_validation: brightness_result={brightness_result}")
-    print(f"DEBUG run_image_validation: face_result={face_result}")
-    print(f"DEBUG run_image_validation: orientation_result={orientation_result}")
-    print(f"DEBUG run_image_validation: skip_position_check={skip_position_check}")
-
-    # Extract face data from face_result to avoid duplicate MediaPipe detection
-    face_data = face_result.get("face_data") if isinstance(face_result, dict) else None
-    if not face_data:
-        from image_validation.face_detection import detect_faces
-        face_data = detect_faces(image)
+    # 1. Single Face Detection pass (returns bbox + keypoints in ~20ms)
+    face_data = detect_faces(image)
+    face_result = validate_face(image, face_data=face_data)
     single_face_result = validate_single_face(face_data)
 
-    print(f"DEBUG run_image_validation: single_face_result={single_face_result}")
+    # 2. Lighting check evaluated on face ROI
+    brightness_result = validate_brightness(image, face_data=face_data)
 
-    # For uploaded photos, skip face orientation check (which includes position/centering aspects)
-    if skip_position_check:
-        ready = (
-            blur_result["status"] != "failed"
-            and brightness_result["status"] != "failed"
-            and face_result["status"] != "failed"
-            and single_face_result["status"] != "failed"
-        )
-    else:
-        ready = (
-            blur_result["status"] != "failed"
-            and brightness_result["status"] != "failed"
-            and face_result["status"] != "failed"
-            and single_face_result["status"] != "failed"
-            and orientation_result["status"] != "failed"
-        )
+    # 3. Blur check (lenient so soft focus / smoothed selfies pass)
+    blur_result = validate_blur(image)
 
-    print(f"DEBUG run_image_validation: ready={ready}")
+    # 4. Instant orientation evaluation from keypoints (guidance only)
+    orientation_result = validate_face_orientation(face_data)
+
+    # Analysis is ready when a single face is confirmed and lighting/blur are usable
+    ready = (
+        face_result["status"] != "failed"
+        and single_face_result["status"] != "failed"
+        and brightness_result["status"] != "failed"
+        and blur_result["status"] != "failed"
+    )
 
     return {
         "ready_for_analysis": ready,
@@ -81,26 +64,26 @@ def run_live_validation(image_input: Any) -> Dict[str, Any]:
             "error": "Unable to read image. The file may be corrupted or in an unsupported format.",
         }
 
-    brightness_result = validate_brightness(image)
-    face_result = validate_face(image)
-    orientation_result = validate_face_orientation(image)
+    # 1. Single Face Detection pass (~20ms)
+    face_data = detect_faces(image)
+    face_result = validate_face(image, face_data=face_data)
+    single_face_result = validate_single_face(face_data)
 
-    # Extract face data from validate_face result to avoid duplicate detection
-    face_data = face_result.get("face_data") if isinstance(face_result, dict) and "face_data" in face_result else None
-    if face_data:
-        single_face_result = validate_single_face(face_data)
-    else:
-        # Fallback: run detection if face_data not available
-        from image_validation.face_detection import detect_faces
-        face_data = detect_faces(image)
-        single_face_result = validate_single_face(face_data)
+    # 2. Lighting check evaluated on face ROI
+    brightness_result = validate_brightness(image, face_data=face_data)
+
+    # 3. Instant orientation evaluation from keypoints
+    orientation_result = validate_face_orientation(face_data)
 
     ready = (
-        brightness_result["status"] != "failed"
-        and face_result["status"] != "failed"
+        face_result["status"] != "failed"
         and single_face_result["status"] != "failed"
-        and orientation_result["status"] != "failed"
+        and brightness_result["status"] != "failed"
     )
+
+    guidance = "Keep your face centered in the frame."
+    if orientation_result.get("status") == "warning":
+        guidance = orientation_result.get("message", guidance)
 
     return {
         "ready_for_analysis": ready,
@@ -110,5 +93,5 @@ def run_live_validation(image_input: Any) -> Dict[str, Any]:
             "single_face": single_face_result,
             "face_orientation": orientation_result,
         },
-        "guidance": "Keep your face centered in the frame."
+        "guidance": guidance
     }
