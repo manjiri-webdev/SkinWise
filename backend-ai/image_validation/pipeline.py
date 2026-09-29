@@ -31,9 +31,11 @@ def run_image_validation(image_input: Any, skip_position_check: bool = False) ->
     print(f"DEBUG run_image_validation: orientation_result={orientation_result}")
     print(f"DEBUG run_image_validation: skip_position_check={skip_position_check}")
 
-    # Extract face data for single face validation
-    from image_validation.face_detection import detect_faces
-    face_data = detect_faces(image)
+    # Extract face data from face_result to avoid duplicate MediaPipe detection
+    face_data = face_result.get("face_data") if isinstance(face_result, dict) else None
+    if not face_data:
+        from image_validation.face_detection import detect_faces
+        face_data = detect_faces(image)
     single_face_result = validate_single_face(face_data)
 
     print(f"DEBUG run_image_validation: single_face_result={single_face_result}")

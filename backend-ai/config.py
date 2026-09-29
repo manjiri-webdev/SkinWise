@@ -1,7 +1,6 @@
-# Blur (Laplacian variance) - temporarily lowered for laptop webcam testing
-# Production values: BLUR_FAIL_THRESHOLD = 80, BLUR_WARNING_THRESHOLD = 150
-BLUR_FAIL_THRESHOLD = 30
-BLUR_WARNING_THRESHOLD = 60
+# Blur (Laplacian variance) - calibrated for mobile cameras and smooth selfie filters
+BLUR_FAIL_THRESHOLD = 15
+BLUR_WARNING_THRESHOLD = 30
 
 # Brightness (mean grayscale intensity, 0-255) - relaxed for normal indoor lighting
 BRIGHTNESS_FAIL_LOW = 40
@@ -14,15 +13,15 @@ FACE_AREA_FAIL = 0.06
 FACE_AREA_WARNING = 0.12
 
 # Face position (normalized center must fall within this box)
-FACE_POSITION_MIN = 0.30
-FACE_POSITION_MAX = 0.70
+FACE_POSITION_MIN = 0.20
+FACE_POSITION_MAX = 0.80
 
 # Face orientation (asymmetry between eye-to-nose distances)
-ORIENTATION_PASS_THRESHOLD = 0.03
-ORIENTATION_WARNING_THRESHOLD = 0.06
+ORIENTATION_PASS_THRESHOLD = 0.06
+ORIENTATION_WARNING_THRESHOLD = 0.12
 
-# Detection confidence
-MIN_FACE_DETECTION_CONFIDENCE = 0.8
+# Detection confidence (calibrated for diverse skin tones and lighting conditions)
+MIN_FACE_DETECTION_CONFIDENCE = 0.55
 YOLO_CONFIDENCE_THRESHOLD = 0.10
 
 # Upload constraints

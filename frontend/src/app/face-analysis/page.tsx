@@ -450,9 +450,9 @@ export default function FaceAnalysis() {
 
           await markFaceAnalysisComplete();
           setFlowStep("success");
-        } catch (err) {
+        } catch (err: any) {
           console.error(err);
-          setUploadError("Something went wrong while analyzing your photo. Please try again.");
+          setUploadError(err?.message || "Something went wrong while analyzing your photo. Please try again.");
           setFlowStep("error");
         }
       },
@@ -562,9 +562,9 @@ export default function FaceAnalysis() {
 
       await markFaceAnalysisComplete();
       setFlowStep("success");
-    } catch (err) {
+    } catch (err: any) {
       console.error("Upload error:", err);
-      setUploadError("Something went wrong while analyzing your photo. Please try again.");
+      setUploadError(err?.message || "Something went wrong while analyzing your photo. Please try again.");
       setFlowStep("upload_preview");
     }
   };

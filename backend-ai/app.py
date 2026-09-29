@@ -104,6 +104,14 @@ def upload_image(file: UploadFile = File(...), user_id: str = Depends(get_curren
     if image is None:
         raise HTTPException(status_code=400, detail="Unable to decode image. Unsupported format or corrupt data.")
 
+    # Downscale massive images (e.g. 12MP phone photos) to standard max dimension 1280px
+    # Prevents Render CPU thrashing and Out-Of-Memory container kills
+    h, w = image.shape[:2]
+    max_dim = 1280
+    if max(h, w) > max_dim:
+        scale = max_dim / float(max(h, w))
+        image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
     validation = run_image_validation(image, skip_position_check=is_file_upload)
 
     if not validation["ready_for_analysis"]:

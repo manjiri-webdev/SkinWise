@@ -26,4 +26,10 @@ def validate_live(file: UploadFile = File(...)):
             detail="Unable to read image. The file may be corrupted or in an unsupported format."
         )
 
+    # Downscale live frame if larger than 640px for faster validation
+    h, w = image.shape[:2]
+    if max(h, w) > 640:
+        scale = 640 / float(max(h, w))
+        image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
     return run_live_validation(image)

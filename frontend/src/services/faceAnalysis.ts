@@ -58,17 +58,51 @@ export async function uploadFaceImage(file: File, isFileUpload: boolean = false)
   formData.append("is_file_upload", isFileUpload.toString());
 
   const token = await getAuthToken();
+  const uploadUrl = joinApiUrl(AI_BACKEND_URL, "/upload");
 
-  const response = await fetch(joinApiUrl(AI_BACKEND_URL, "/upload"), {
-    method: "POST",
-    body: formData,
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(uploadUrl, {
+      method: "POST",
+      body: formData,
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    // If Render was cold and returned 502/503/504, wait 2.5s and retry once
+    if ([502, 503, 504].includes(response.status)) {
+      console.warn(`Upload received ${response.status} from backend. Retrying once after warm-up...`);
+      await new Promise((r) => setTimeout(r, 2500));
+      response = await fetch(uploadUrl, {
+        method: "POST",
+        body: formData,
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    }
+  } catch (netErr: any) {
+    console.warn("Upload fetch network error, retrying once in 2.5s...", netErr);
+    await new Promise((r) => setTimeout(r, 2500));
+    response = await fetch(uploadUrl, {
+      method: "POST",
+      body: formData,
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  }
 
   if (!response.ok) {
-    throw new Error(`Upload failed with status ${response.status}`);
+    let errorDetail = `Upload failed with status ${response.status}`;
+    try {
+      const errJson = await response.json();
+      if (errJson && errJson.detail) {
+        errorDetail = errJson.detail;
+      }
+    } catch {}
+    throw new Error(errorDetail);
   }
 
   return response.json();

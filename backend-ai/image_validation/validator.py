@@ -107,7 +107,8 @@ def validate_face_orientation(image) -> Dict[str, Any]:
     face_points = detect_face_orientation(image)
 
     if face_points is None:
-        return {"status": "failed", "face_orientation": "unknown", "message": "Unable to determine face orientation."}
+        # If landmarks cannot be resolved but face was already detected, don't block analysis
+        return {"status": "warning", "face_orientation": "unverified", "message": "Face orientation unverified; look directly forward."}
 
     nose = face_points["nose"]
     left_eye = face_points["left_eye"]
@@ -122,9 +123,10 @@ def validate_face_orientation(image) -> Dict[str, Any]:
     right_distance = abs(right_eye.x - nose.x)
     yaw_difference = abs(left_distance - right_distance)
 
-    # Check up/down tilt (pitch) using head landmarks
-    vertical_center = (top_head.y + chin.y) / 2
-    nose_y_offset = abs(nose.y - vertical_center)
+    # Check up/down tilt (pitch) using calibrated anatomical center (~55% from hairline to chin)
+    head_height = abs(chin.y - top_head.y)
+    expected_nose_y = top_head.y + 0.54 * head_height
+    nose_y_offset = abs(nose.y - expected_nose_y)
 
     # Check ear visibility for left/right turn detection
     ear_width = abs(right_ear.x - left_ear.x)
@@ -132,26 +134,22 @@ def validate_face_orientation(image) -> Dict[str, Any]:
     nose_to_right_ear = abs(nose.x - right_ear.x)
     ear_asymmetry = abs(nose_to_left_ear - nose_to_right_ear) / ear_width if ear_width > 0 else 0
 
-    # Determine orientation issues
-    if yaw_difference > config.ORIENTATION_WARNING_THRESHOLD:
-        if left_distance > right_distance:
+    # Determine orientation issues (only fail if severely turned, otherwise issue warning)
+    severe_threshold = config.ORIENTATION_WARNING_THRESHOLD * 1.5
+
+    if yaw_difference > severe_threshold or ear_asymmetry > severe_threshold:
+        if left_distance > right_distance or nose_to_left_ear > nose_to_right_ear:
             return {"status": "failed", "face_orientation": "turned_left", "message": "Turn your face slightly right."}
         else:
             return {"status": "failed", "face_orientation": "turned_right", "message": "Turn your face slightly left."}
 
-    if ear_asymmetry > config.ORIENTATION_WARNING_THRESHOLD:
-        if nose_to_left_ear > nose_to_right_ear:
-            return {"status": "failed", "face_orientation": "turned_left", "message": "Turn your face slightly right."}
-        else:
-            return {"status": "failed", "face_orientation": "turned_right", "message": "Turn your face slightly left."}
-
-    if nose_y_offset > config.ORIENTATION_WARNING_THRESHOLD:
-        if nose.y < vertical_center:
+    if nose_y_offset > severe_threshold:
+        if nose.y < expected_nose_y:
             return {"status": "failed", "face_orientation": "looking_up", "message": "Look straight at the camera."}
         else:
             return {"status": "failed", "face_orientation": "looking_down", "message": "Look straight at the camera."}
 
-    if yaw_difference > config.ORIENTATION_PASS_THRESHOLD:
+    if yaw_difference > config.ORIENTATION_PASS_THRESHOLD or nose_y_offset > config.ORIENTATION_PASS_THRESHOLD:
         return {"status": "warning", "face_orientation": "slightly_turned", "message": "Please look directly at the camera."}
 
     return {"status": "passed", "face_orientation": "front", "message": "Face is looking straight."}
