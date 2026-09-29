@@ -75,6 +75,40 @@ function ProductAnalysisContent() {
     loadProductAndIngredients();
   }, [productIdParam, productNameParam, brandParam]);
 
+  useEffect(() => {
+    if (product && evaluation) {
+      try {
+        const evalObj = evaluation as any;
+        const currentProductSnapshot = {
+          product_name: product.product_name,
+          brand: product.brand,
+          category: product.category,
+          decision: evaluation.decision,
+          match_label:
+            evalObj.match_label ||
+            (evaluation.decision === "KEEP"
+              ? "Good Match"
+              : evaluation.decision === "CAUTION"
+              ? "Use with Caution"
+              : "Not Recommended"),
+          confidence: evaluation.confidence,
+          reasons: evaluation.reasons || [],
+          mitigations: evaluation.mitigations || [],
+          reason_codes: evaluation.reason_codes || [],
+          suitable_count: evalObj.suitable_count,
+          caution_count: evalObj.caution_count,
+          not_recommended_count: evalObj.not_recommended_count,
+        };
+        sessionStorage.setItem("skinwise_current_product_analysis", JSON.stringify(currentProductSnapshot));
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("skinwise_product_evaluated", { detail: currentProductSnapshot }));
+        }
+      } catch (err) {
+        console.warn("Could not sync product snapshot to sessionStorage:", err);
+      }
+    }
+  }, [product, evaluation]);
+
   const loadProductAndIngredients = async () => {
     try {
       setLoading(true);

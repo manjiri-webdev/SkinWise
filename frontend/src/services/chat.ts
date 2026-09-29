@@ -18,9 +18,11 @@ export interface CurrentProductContext {
 }
 
 export interface DermatologistSearchAction {
+  type?: string;
   label: string;
   query: string;
   maps_url: string;
+  url?: string;
 }
 
 export interface ChatMessage {

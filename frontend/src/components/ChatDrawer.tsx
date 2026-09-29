@@ -10,6 +10,7 @@ import {
   ShieldAlert,
   Loader2,
   MapPin,
+  Search,
   ExternalLink,
   Tag,
   ArrowRight,
@@ -51,17 +52,31 @@ const QUICK_STARTERS = [
  * Renders bold headers, bullet items, and plain text cleanly without leaking raw markdown syntax.
  */
 function CleanTypographyRenderer({ text }: { text: string }) {
-  const lines = text.split("\n");
+  // Defensive pre-cleaning against raw SVG/HTML, svgSearch tokens, or markdown links leaked into text
+  const cleanedText = text
+    .replace(/<svg[\s\S]*?<\/svg>/gi, "")
+    .replace(/svgSearch[\s\S]*?svg/gi, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/<[^>]+>/g, "");
+
+  const lines = cleanedText.split("\n");
 
   const renderInline = (str: string): React.ReactNode[] => {
-    // Cleanly process bold (**...**) and inline code (`...`) and strip rogue asterisks
-    const parts = str.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+    // Cleanly process bold (**...**), italics (*...*), inline code (`...`)
+    const parts = str.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g);
     return parts.map((part, idx) => {
       if (part.startsWith("**") && part.endsWith("**")) {
         return (
           <strong key={idx} className="font-semibold text-gray-900">
             {part.slice(2, -2).replace(/\*/g, "")}
           </strong>
+        );
+      }
+      if (part.startsWith("*") && part.endsWith("*") && !part.startsWith("**")) {
+        return (
+          <em key={idx} className="italic text-gray-800">
+            {part.slice(1, -1).replace(/\*/g, "")}
+          </em>
         );
       }
       if (part.startsWith("`") && part.endsWith("`")) {
@@ -74,8 +89,8 @@ function CleanTypographyRenderer({ text }: { text: string }) {
           </code>
         );
       }
-      // Strip any residual stray asterisks or hashes from plain text segments
-      const sanitized = part.replace(/\*\*/g, "").replace(/(?<!\w)\*(?!\w)/g, "");
+      // Strip any residual stray asterisks, backticks, or hashes from plain text segments
+      const sanitized = part.replace(/[*`#]/g, "");
       return <span key={idx}>{sanitized}</span>;
     });
   };
@@ -220,11 +235,25 @@ export default function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
     setLoading(true);
 
     try {
+      // Fallback directly to sessionStorage if currentProduct hasn't synced into state yet
+      let activeProd = currentProduct;
+      if (!activeProd && typeof window !== "undefined") {
+        try {
+          const raw = sessionStorage.getItem("skinwise_current_product_analysis");
+          if (raw) {
+            activeProd = JSON.parse(raw);
+            setCurrentProduct(activeProd);
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
       const historyForApi = updatedHistory
         .filter((m) => m.id !== "welcome-msg")
         .slice(-6);
 
-      const response = await sendChatMessage(query, historyForApi, currentProduct);
+      const response = await sendChatMessage(query, historyForApi, activeProd || undefined);
 
       const assistantMsg: ChatMessage = {
         id: `assistant-${Date.now()}`,
@@ -385,12 +414,12 @@ export default function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                   {!isUser && msg.dermatologist_search && (
                     <div className="mt-3 pt-2.5 border-t border-gray-100">
                       <a
-                        href={msg.dermatologist_search.maps_url}
+                        href={msg.dermatologist_search.url || msg.dermatologist_search.maps_url}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold border border-blue-200 transition shadow-2xs group"
                       >
-                        <MapPin size={15} className="text-blue-600 group-hover:scale-110 transition shrink-0" />
+                        <Search size={15} className="text-blue-600 group-hover:scale-110 transition shrink-0" />
                         <span>{msg.dermatologist_search.label}</span>
                         <ExternalLink size={13} className="text-blue-400 group-hover:text-blue-600 shrink-0 ml-0.5" />
                       </a>
