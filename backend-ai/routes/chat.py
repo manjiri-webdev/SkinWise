@@ -240,24 +240,12 @@ async def chat_with_assistant(
             detail="AI Assistant is temporarily unavailable (GEMINI_API_KEY is not configured)."
         )
 
-    # 1. Retrieve sanitized user context
-    user_context = _extract_sanitized_user_context(user_id)
-    system_instruction = _build_system_prompt(user_context)
-
-    # 2. Build conversational contents
     try:
-        from google import genai
-        from google.genai import types
+        # 1. Retrieve sanitized user context
+        user_context = _extract_sanitized_user_context(user_id)
+        system_instruction = _build_system_prompt(user_context)
 
-        client = genai.Client(
-            api_key=api_key,
-            http_options=types.HttpOptions(
-                timeout=20000,
-                retry_options=types.HttpRetryOptions(attempts=2)
-            )
-        )
-
-        # Build message history for multi-turn context (last 6 turns max)
+        # 2. Build conversational contents
         formatted_history = []
         for msg in (request.conversation_history or [])[-6:]:
             role = "user" if msg.role == "user" else "model"
@@ -268,35 +256,77 @@ async def chat_with_assistant(
             full_prompt += "Previous conversation:\n" + "\n".join(formatted_history) + "\n\n"
         full_prompt += f"User message: {user_message}"
 
-        # 3. Call Gemini using candidate models with fallback
         candidate_models = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"]
-        gemini_response = None
+        raw_text = None
         last_error = None
 
-        for model_name in candidate_models:
-            try:
-                gemini_response = client.models.generate_content(
-                    model=model_name,
-                    contents=full_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        temperature=0.4,
-                        response_mime_type="application/json"
-                    )
-                )
-                if gemini_response and gemini_response.text:
-                    break
-            except Exception as model_err:
-                print(f"[CHAT] Model {model_name} attempt failed: {model_err}")
-                last_error = model_err
+        # 3a. Strategy A: Call Gemini using official google-genai SDK (if available)
+        try:
+            from google import genai
+            from google.genai import types
 
-        if not gemini_response or not gemini_response.text:
-            raise RuntimeError(f"All candidate models failed. Last error: {last_error}")
+            client = genai.Client(
+                api_key=api_key,
+                http_options=types.HttpOptions(
+                    timeout=20000,
+                    retry_options=types.HttpRetryOptions(attempts=2)
+                )
+            )
+
+            for model_name in candidate_models:
+                try:
+                    gemini_response = client.models.generate_content(
+                        model=model_name,
+                        contents=full_prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            temperature=0.4,
+                            response_mime_type="application/json"
+                        )
+                    )
+                    if gemini_response and gemini_response.text:
+                        raw_text = gemini_response.text.strip()
+                        break
+                except Exception as model_err:
+                    print(f"[CHAT] SDK attempt for {model_name} failed: {model_err}")
+                    last_error = model_err
+        except (ImportError, ModuleNotFoundError) as sdk_err:
+            print(f"[CHAT] google.genai SDK not available ({sdk_err}), using direct REST API fallback...")
+
+        # 3b. Strategy B: Direct REST API fallback using requests (always available)
+        if not raw_text:
+            import requests
+
+            for model_name in candidate_models:
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+                    payload = {
+                        "contents": [{"parts": [{"text": full_prompt}]}],
+                        "systemInstruction": {"parts": [{"text": system_instruction}]},
+                        "generationConfig": {
+                            "temperature": 0.4,
+                            "responseMimeType": "application/json"
+                        }
+                    }
+                    r = requests.post(url, json=payload, timeout=20)
+                    if r.status_code == 200:
+                        data = r.json()
+                        candidates = data.get("candidates") or []
+                        if candidates:
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            if parts and "text" in parts[0]:
+                                raw_text = parts[0]["text"].strip()
+                                break
+                    else:
+                        print(f"[CHAT] REST attempt with {model_name} returned HTTP {r.status_code}: {r.text[:120]}")
+                except Exception as rest_err:
+                    print(f"[CHAT] REST attempt with {model_name} failed: {rest_err}")
+                    last_error = rest_err
+
+        if not raw_text:
+            raise RuntimeError(f"All candidate models and fallback methods failed. Last error: {last_error}")
 
         # 4. Parse JSON structured response
-        raw_text = gemini_response.text.strip()
-        
-        # Clean potential markdown fences
         if raw_text.startswith("```json"):
             raw_text = raw_text[7:]
         if raw_text.startswith("```"):
@@ -310,7 +340,6 @@ async def chat_with_assistant(
             reply = parsed.get("reply") or raw_text
             suggested_actions = parsed.get("suggested_actions") or []
         except Exception:
-            # Fallback if raw JSON decoding fails
             reply = raw_text
             suggested_actions = ["Explain my routine", "Why is my product on caution?"]
 
