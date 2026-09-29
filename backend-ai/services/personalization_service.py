@@ -1,7 +1,14 @@
 import re
+import time
 import supabase_config
 from typing import Dict, List, Optional, Any
 from services.recommendation_service import RecommendationService
+
+# Module-level cross-request in-memory caches to eliminate repeated Supabase queries
+_GLOBAL_INGREDIENT_CACHE: Dict[str, Dict[str, Any]] = {}
+_ALL_INGREDIENTS_CACHE: Optional[List[Dict[str, Any]]] = None
+_ALL_INGREDIENTS_LOADED_AT: float = 0.0
+_INGREDIENT_CACHE_TTL: float = 600.0  # 10 minutes
 
 
 class PersonalizationService:
@@ -14,8 +21,28 @@ class PersonalizationService:
     
     def __init__(self):
         self.supabase = supabase_config.supabase
-        # Simple in-memory ingredient cache to reduce repeated queries
-        self._ingredient_cache = {}
+        # Simple in-memory ingredient cache to reduce repeated queries (backed by module cache)
+        self._ingredient_cache = _GLOBAL_INGREDIENT_CACHE
+
+    def _load_all_ingredients(self) -> List[Dict[str, Any]]:
+        """Load and cache all ingredients from Supabase into memory with TTL."""
+        global _ALL_INGREDIENTS_CACHE, _ALL_INGREDIENTS_LOADED_AT, _GLOBAL_INGREDIENT_CACHE
+        now = time.time()
+        if _ALL_INGREDIENTS_CACHE is not None and (now - _ALL_INGREDIENTS_LOADED_AT < _INGREDIENT_CACHE_TTL):
+            return _ALL_INGREDIENTS_CACHE
+        try:
+            resp = self.supabase.table("ingredients").select("*").limit(2000).execute()
+            if resp.data:
+                _ALL_INGREDIENTS_CACHE = resp.data
+                _ALL_INGREDIENTS_LOADED_AT = now
+                for ing in resp.data:
+                    name = ing.get("ingredient")
+                    if name:
+                        _GLOBAL_INGREDIENT_CACHE[name.lower().strip()] = ing
+                return _ALL_INGREDIENTS_CACHE
+        except Exception as e:
+            print(f"Error loading ingredients table: {e}")
+        return _ALL_INGREDIENTS_CACHE or []
     
     def _normalize_product_identity(self, product_name: str, brand: str = None) -> str:
         """
@@ -177,24 +204,36 @@ class PersonalizationService:
             ingredient_names = [name.strip() for name in ingredient_list.split("|") if name.strip()]
             total_parsed = len(ingredient_names)
             
+            all_ingredients = self._load_all_ingredients()
+
             for ingredient_name in ingredient_names:
-                # Check cache first
-                cache_key = ingredient_name.lower()
-                if cache_key in self._ingredient_cache:
-                    ingredients.append(self._ingredient_cache[cache_key])
+                cache_key = ingredient_name.lower().strip()
+                if cache_key in _GLOBAL_INGREDIENT_CACHE:
+                    ingredients.append(_GLOBAL_INGREDIENT_CACHE[cache_key])
                     continue
                 
-                # Not in cache, query Supabase
-                try:
-                    ing_response = self.supabase.table("ingredients").select("*").ilike("ingredient", f"%{ingredient_name}%").execute()
-                    if ing_response.data:
-                        ingredient_record = ing_response.data[0]
-                        ingredients.append(ingredient_record)
-                        # Cache the result
-                        self._ingredient_cache[cache_key] = ingredient_record
-                except Exception as e:
-                    print(f"Error loading ingredient {ingredient_name}: {e}")
-                    continue
+                # Check in-memory list for exact or partial match
+                match = None
+                for ing in all_ingredients:
+                    ing_name_low = (ing.get("ingredient") or "").lower().strip()
+                    if cache_key == ing_name_low or cache_key in ing_name_low or ing_name_low in cache_key:
+                        match = ing
+                        break
+
+                if match:
+                    ingredients.append(match)
+                    _GLOBAL_INGREDIENT_CACHE[cache_key] = match
+                else:
+                    # Single lookup fallback only for ingredients missing from table
+                    try:
+                        ing_response = self.supabase.table("ingredients").select("*").ilike("ingredient", f"%{ingredient_name}%").limit(1).execute()
+                        if ing_response.data:
+                            ingredient_record = ing_response.data[0]
+                            ingredients.append(ingredient_record)
+                            _GLOBAL_INGREDIENT_CACHE[cache_key] = ingredient_record
+                    except Exception as e:
+                        print(f"Error loading ingredient {ingredient_name}: {e}")
+                        continue
                     
         except Exception as e:
             print(f"Error getting product ingredients: {e}")
@@ -1870,18 +1909,30 @@ class PersonalizationService:
             if raw_list:
                 parsed_names = [n.strip() for n in raw_list.replace("|", ",").split(",") if n.strip()]
                 total_parsed = len(parsed_names)
+                all_ingredients = self._load_all_ingredients()
                 for ing_name in parsed_names:
-                    cache_key = ing_name.lower()
-                    if cache_key in self._ingredient_cache:
-                        ingredients.append(self._ingredient_cache[cache_key])
+                    cache_key = ing_name.lower().strip()
+                    if cache_key in _GLOBAL_INGREDIENT_CACHE:
+                        ingredients.append(_GLOBAL_INGREDIENT_CACHE[cache_key])
                         continue
-                    try:
-                        ing_resp = self.supabase.table("ingredients").select("*").ilike("ingredient", f"%{ing_name}%").limit(1).execute()
-                        if ing_resp.data:
-                            ingredients.append(ing_resp.data[0])
-                            self._ingredient_cache[cache_key] = ing_resp.data[0]
-                    except Exception as e:
-                        pass
+                    # Match in-memory list
+                    match = None
+                    for ing in all_ingredients:
+                        ing_name_low = (ing.get("ingredient") or "").lower().strip()
+                        if cache_key == ing_name_low or cache_key in ing_name_low or ing_name_low in cache_key:
+                            match = ing
+                            break
+                    if match:
+                        ingredients.append(match)
+                        _GLOBAL_INGREDIENT_CACHE[cache_key] = match
+                    else:
+                        try:
+                            ing_resp = self.supabase.table("ingredients").select("*").ilike("ingredient", f"%{ing_name}%").limit(1).execute()
+                            if ing_resp.data:
+                                ingredients.append(ing_resp.data[0])
+                                _GLOBAL_INGREDIENT_CACHE[cache_key] = ing_resp.data[0]
+                        except Exception as e:
+                            pass
         
         product["_resolved_ingredients"] = ingredients
         product["_total_parsed_ingredients"] = total_parsed

@@ -70,6 +70,7 @@ function ProductAnalysisContent() {
   // User suitability evaluation
   const [evaluation, setEvaluation] = useState<any | null>(null);
   const [isEvaluated, setIsEvaluated] = useState(false);
+  const [isEvaluatingPersonalization, setIsEvaluatingPersonalization] = useState(false);
 
   useEffect(() => {
     loadProductAndIngredients();
@@ -255,6 +256,8 @@ function ProductAnalysisContent() {
       }
 
       setResolvedIngredients(resolvedList);
+      setLoading(false);
+      setIsEvaluatingPersonalization(true);
 
       // 4. Evaluate product against logged-in user profile using existing personalization engine
       try {
@@ -349,6 +352,7 @@ function ProductAnalysisContent() {
       setError(err.message || "Failed to load product details.");
     } finally {
       setLoading(false);
+      setIsEvaluatingPersonalization(false);
     }
   };
 
@@ -510,6 +514,13 @@ function ProductAnalysisContent() {
                       Decision
                     </span>
                   </>
+                ) : isEvaluatingPersonalization ? (
+                  <>
+                    <Loader2 size={20} className="animate-spin text-[#DE688E] mb-0.5" />
+                    <span className="text-[9px] font-bold text-[#6B6375] leading-tight">
+                      Evaluating...
+                    </span>
+                  </>
                 ) : (
                   <>
                     <ShieldCheck size={20} className="text-[#8C7C9E] mb-0.5" />
@@ -591,6 +602,11 @@ function ProductAnalysisContent() {
                       </div>
                     </div>
                   )}
+                </div>
+              ) : isEvaluatingPersonalization ? (
+                <div className="mt-2 flex items-center gap-2.5 text-xs text-[#6B6375] py-2">
+                  <Loader2 size={15} className="animate-spin text-[#DE688E] shrink-0" />
+                  <span>Evaluating suitability against your skin profile and routine history...</span>
                 </div>
               ) : (
                 <div className="mt-2">

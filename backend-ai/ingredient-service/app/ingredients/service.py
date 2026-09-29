@@ -94,6 +94,39 @@ def split_aliases(aliases):
         return [aliases.strip()] if aliases.strip() else []
 
 
+import time
+
+_INGREDIENTS_CACHE = None
+_INGREDIENTS_CACHE_TIME = 0.0
+_CACHE_TTL = 600.0  # 10 minutes
+
+def get_cached_ingredients():
+    global _INGREDIENTS_CACHE, _INGREDIENTS_CACHE_TIME
+    now = time.time()
+    if _INGREDIENTS_CACHE is not None and (now - _INGREDIENTS_CACHE_TIME < _CACHE_TTL):
+        return _INGREDIENTS_CACHE
+    try:
+        response = (
+            supabase
+            .table("ingredients")
+            .select("*")
+            .limit(2000)
+            .execute()
+        )
+        if response.data:
+            _INGREDIENTS_CACHE = response.data
+            _INGREDIENTS_CACHE_TIME = now
+            return _INGREDIENTS_CACHE
+    except Exception as e:
+        print(f"Error loading ingredients: {e}")
+    return _INGREDIENTS_CACHE or []
+
+def invalidate_ingredients_cache():
+    global _INGREDIENTS_CACHE, _INGREDIENTS_CACHE_TIME
+    _INGREDIENTS_CACHE = None
+    _INGREDIENTS_CACHE_TIME = 0.0
+
+
 def find_ingredient(ingredient: str):
     """
     Find ingredient in database using normalization layer for lookup.
@@ -108,14 +141,7 @@ def find_ingredient(ingredient: str):
     # Use normalization layer for lookup only
     search_name = normalize_ingredient_for_lookup(ingredient)
 
-    response = (
-        supabase
-        .table("ingredients")
-        .select("*")
-        .execute()
-    )
-
-    ingredients = response.data or []
+    ingredients = get_cached_ingredients()
 
     #Match ingredient column (exact match using normalized lookup)
     for record in ingredients:
