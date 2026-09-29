@@ -109,7 +109,8 @@ def _extract_sanitized_user_context(user_id: str) -> Dict[str, Any]:
     for prod in current_products_raw:
         clean_product_history.append({
             "product_name": prod.get("product_name"),
-            "product_type": prod.get("product_type"),
+            "brand": prod.get("brand"),
+            "product_type": prod.get("product_type") or prod.get("category"),
             "reaction": prod.get("reaction") or "none",
             "notes": prod.get("notes") or ""
         })
@@ -123,27 +124,87 @@ def _extract_sanitized_user_context(user_id: str) -> Dict[str, Any]:
     try:
         pers_result = personalization_service.analyze_user_personalization(user_id)
         if pers_result.get("success"):
-            # AM routine
-            am_steps = pers_result.get("am_routine", {}).get("steps", [])
-            for s in am_steps:
-                prod = s.get("product")
-                clean_routine["am"].append({
-                    "step": s.get("label"),
-                    "product": prod.get("product_name") if prod else None,
-                    "brand": prod.get("brand") if prod else None,
-                    "status": "slotted" if prod else "missing"
-                })
+            # AM routine slots
+            am_slots = pers_result.get("am_routine") or {}
+            if isinstance(am_slots, dict) and "slots" in am_slots:
+                am_slots = am_slots["slots"]
 
-            # PM routine
-            pm_steps = pers_result.get("pm_routine", {}).get("steps", [])
-            for s in pm_steps:
-                prod = s.get("product")
-                clean_routine["pm"].append({
-                    "step": s.get("label"),
-                    "product": prod.get("product_name") if prod else None,
-                    "brand": prod.get("brand") if prod else None,
-                    "status": "slotted" if prod else "missing"
-                })
+            if isinstance(am_slots, dict):
+                for slot_key in ["cleanser", "treatment", "moisturizer", "sunscreen"]:
+                    prod = am_slots.get(slot_key)
+                    if prod:
+                        eval_data = prod.get("evaluation") or {}
+                        clean_routine["am"].append({
+                            "step": slot_key.capitalize(),
+                            "product": prod.get("product_name"),
+                            "brand": prod.get("brand"),
+                            "decision": eval_data.get("decision", "KEEP"),
+                            "reasons": eval_data.get("reasons", []),
+                            "mitigations": eval_data.get("mitigations", []),
+                            "status": "slotted"
+                        })
+                    else:
+                        clean_routine["am"].append({
+                            "step": slot_key.capitalize(),
+                            "product": None,
+                            "brand": None,
+                            "decision": None,
+                            "status": "missing"
+                        })
+            elif isinstance(am_slots, list):
+                for s in am_slots:
+                    prod = s.get("product") if isinstance(s, dict) else None
+                    eval_data = prod.get("evaluation") or {} if prod else {}
+                    clean_routine["am"].append({
+                        "step": s.get("label") or s.get("step") if isinstance(s, dict) else str(s),
+                        "product": prod.get("product_name") if prod else None,
+                        "brand": prod.get("brand") if prod else None,
+                        "decision": eval_data.get("decision") if prod else None,
+                        "reasons": eval_data.get("reasons", []) if prod else [],
+                        "mitigations": eval_data.get("mitigations", []) if prod else [],
+                        "status": "slotted" if prod else "missing"
+                    })
+
+            # PM routine slots
+            pm_slots = pers_result.get("pm_routine") or {}
+            if isinstance(pm_slots, dict) and "slots" in pm_slots:
+                pm_slots = pm_slots["slots"]
+
+            if isinstance(pm_slots, dict):
+                for slot_key in ["cleanser", "treatment", "moisturizer"]:
+                    prod = pm_slots.get(slot_key)
+                    if prod:
+                        eval_data = prod.get("evaluation") or {}
+                        clean_routine["pm"].append({
+                            "step": slot_key.capitalize(),
+                            "product": prod.get("product_name"),
+                            "brand": prod.get("brand"),
+                            "decision": eval_data.get("decision", "KEEP"),
+                            "reasons": eval_data.get("reasons", []),
+                            "mitigations": eval_data.get("mitigations", []),
+                            "status": "slotted"
+                        })
+                    else:
+                        clean_routine["pm"].append({
+                            "step": slot_key.capitalize(),
+                            "product": None,
+                            "brand": None,
+                            "decision": None,
+                            "status": "missing"
+                        })
+            elif isinstance(pm_slots, list):
+                for s in pm_slots:
+                    prod = s.get("product") if isinstance(s, dict) else None
+                    eval_data = prod.get("evaluation") or {} if prod else {}
+                    clean_routine["pm"].append({
+                        "step": s.get("label") or s.get("step") if isinstance(s, dict) else str(s),
+                        "product": prod.get("product_name") if prod else None,
+                        "brand": prod.get("brand") if prod else None,
+                        "decision": eval_data.get("decision") if prod else None,
+                        "reasons": eval_data.get("reasons", []) if prod else [],
+                        "mitigations": eval_data.get("mitigations", []) if prod else [],
+                        "status": "slotted" if prod else "missing"
+                    })
 
             # Evaluated products in routine (SOURCE OF TRUTH for KEEP/CAUTION/REJECT)
             for ep in pers_result.get("evaluated_products", []):
@@ -181,11 +242,111 @@ def _extract_sanitized_user_context(user_id: str) -> Dict[str, Any]:
     saved_night_routine = profile.get("night_routine") or []
     user_city = profile.get("city") or environment.get("city") or ""
 
+    # Build clear mapping for each step in user's saved profile routine
+    detailed_saved_am = []
+    for step_label in saved_morning_routine:
+        step_str = str(step_label).strip()
+        step_lower = step_str.lower()
+        matched_prod = None
+
+        # 1. First check slotted products in clean_routine["am"]
+        for slot in clean_routine.get("am", []):
+            slot_name = slot.get("step", "").lower()
+            if slot_name in step_lower or step_lower in slot_name:
+                if slot.get("product"):
+                    matched_prod = {
+                        "product_name": slot.get("product"),
+                        "brand": slot.get("brand"),
+                        "decision": slot.get("decision"),
+                        "reasons": slot.get("reasons", []),
+                        "mitigations": slot.get("mitigations", [])
+                    }
+                    break
+
+        # 2. Check current_products history
+        if not matched_prod:
+            for cp in clean_product_history:
+                pt = (cp.get("product_type") or "").lower()
+                pn = (cp.get("product_name") or "").lower()
+                if step_lower in pt or pt in step_lower or step_lower in pn:
+                    ep_match = next((ep for ep in clean_evaluated_products if ep.get("product_name") == cp.get("product_name")), None)
+                    matched_prod = {
+                        "product_name": cp.get("product_name"),
+                        "brand": cp.get("brand"),
+                        "decision": ep_match.get("decision") if ep_match else None,
+                        "reasons": ep_match.get("reasons", []) if ep_match else [],
+                        "mitigations": ep_match.get("mitigations", []) if ep_match else []
+                    }
+                    break
+
+        detailed_saved_am.append({
+            "step": step_str,
+            "product": matched_prod.get("product_name") if matched_prod else None,
+            "brand": matched_prod.get("brand") if matched_prod else None,
+            "decision": matched_prod.get("decision") if matched_prod else None,
+            "reasons": matched_prod.get("reasons", []) if matched_prod else [],
+            "mitigations": matched_prod.get("mitigations", []) if matched_prod else [],
+            "has_product": bool(matched_prod and matched_prod.get("product_name"))
+        })
+
+    detailed_saved_pm = []
+    for step_label in saved_night_routine:
+        step_str = str(step_label).strip()
+        step_lower = step_str.lower()
+        if step_lower in ["nothing", "none"]:
+            detailed_saved_pm.append({
+                "step": step_str,
+                "note": "User explicitly set their night routine to Nothing in their profile.",
+                "has_product": False
+            })
+            continue
+
+        matched_prod = None
+        for slot in clean_routine.get("pm", []):
+            slot_name = slot.get("step", "").lower()
+            if slot_name in step_lower or step_lower in slot_name:
+                if slot.get("product"):
+                    matched_prod = {
+                        "product_name": slot.get("product"),
+                        "brand": slot.get("brand"),
+                        "decision": slot.get("decision"),
+                        "reasons": slot.get("reasons", []),
+                        "mitigations": slot.get("mitigations", [])
+                    }
+                    break
+
+        if not matched_prod:
+            for cp in clean_product_history:
+                pt = (cp.get("product_type") or "").lower()
+                pn = (cp.get("product_name") or "").lower()
+                if step_lower in pt or pt in step_lower or step_lower in pn:
+                    ep_match = next((ep for ep in clean_evaluated_products if ep.get("product_name") == cp.get("product_name")), None)
+                    matched_prod = {
+                        "product_name": cp.get("product_name"),
+                        "brand": cp.get("brand"),
+                        "decision": ep_match.get("decision") if ep_match else None,
+                        "reasons": ep_match.get("reasons", []) if ep_match else [],
+                        "mitigations": ep_match.get("mitigations", []) if ep_match else []
+                    }
+                    break
+
+        detailed_saved_pm.append({
+            "step": step_str,
+            "product": matched_prod.get("product_name") if matched_prod else None,
+            "brand": matched_prod.get("brand") if matched_prod else None,
+            "decision": matched_prod.get("decision") if matched_prod else None,
+            "reasons": matched_prod.get("reasons", []) if matched_prod else [],
+            "mitigations": matched_prod.get("mitigations", []) if matched_prod else [],
+            "has_product": bool(matched_prod and matched_prod.get("product_name"))
+        })
+
     return {
         "profile": clean_profile,
         "saved_profile_routine": {
             "morning_routine": saved_morning_routine,
-            "night_routine": saved_night_routine
+            "detailed_saved_morning_steps": detailed_saved_am,
+            "night_routine": saved_night_routine,
+            "detailed_saved_night_steps": detailed_saved_pm
         },
         "user_city": user_city,
         "environment": clean_environment,
@@ -220,16 +381,76 @@ CORE CAPABILITIES:
 • Explain why a product was recommended
 • Explain the user's latest facial skin analysis in simple, reassuring language
 
-ROUTINE CONTEXT RULES (GROUND TRUTH):
-• When the user asks "What is my morning / AM routine?" or "What is my night / PM routine?":
-  - First consult 'saved_profile_routine'.
-  - If 'morning_routine' or 'night_routine' has steps (e.g. ["Moisturizer", "Sunscreen"] or ["Nothing"]), clearly state:
-    "Your saved morning routine includes: Moisturizer and Sunscreen." (or "In your profile, your night routine is set to Nothing.")
-  - If 'evaluated_skinwise_routine' has slotted products or missing steps, explain them as your evaluated SkinWise routine:
-    "In your evaluated SkinWise routine: [list slotted products and decisions]."
-  - NEVER claim the user's routine is empty when 'saved_profile_routine' contains items!
+ROUTINE EXPLANATION ARCHITECTURE & RULES:
 
-CURRENTLY ANALYZED PRODUCT CONTEXT:
+1. DISTINGUISH TWO ROUTINE SOURCES:
+• You must ALWAYS clearly distinguish between:
+  A. "Your saved routine": The steps explicitly saved in the user's profile (e.g. morning_routine: Cleanser, Moisturizer, Sunscreen; or night_routine: Nothing).
+  B. "Your SkinWise evaluated routine": The algorithmic routine generated by SkinWise with slotted products, suitability decisions (KEEP/CAUTION/REJECT), and missing steps.
+• NEVER merge these two sources silently. Use clear explicit section headers:
+  YOUR SAVED MORNING ROUTINE:
+  CURRENT SKINWISE EVALUATION:
+  and
+  YOUR SAVED NIGHT ROUTINE:
+  YOUR EVALUATED SKINWISE NIGHT ROUTINE:
+
+2. MORNING ROUTINE EXPLANATIONS:
+When the user asks:
+- "What is my current morning routine?"
+- "Explain my morning routine"
+- "What should I do in the morning?"
+- "Explain my morning routine and why each step is there"
+
+You must explain EACH saved routine step thoroughly using the data in 'saved_profile_routine.detailed_saved_morning_steps' (or 'evaluated_skinwise_routine.am').
+
+Structure your response with this clear format:
+
+YOUR SAVED MORNING ROUTINE:
+
+1. [Step Name, e.g. Cleanser]
+   • Product: [Actual user product name and brand if available, e.g. Minimalist Salicylic Acid + LHA 2% Cleanser, or "No specific product added yet"]
+   • Purpose: [What this step does in skincare, e.g. Cleanses away overnight sebum, sweat, and dead skin cells to prepare skin for daytime protection]
+   • Why for you: [Connect directly to THIS user's profile: e.g. user's oily skin type, acne concerns, or barrier goals]
+
+2. [Step Name, e.g. Moisturizer]
+   • Product: [Actual user product if available, or "No specific product added yet"]
+   • Purpose: [Hydration, barrier repair, preventing transepidermal water loss]
+   • Why for you: [Connect to user's profile: e.g. strengthens the skin barrier to support acne-healing without clogging pores]
+
+3. [Step Name, e.g. Sunscreen]
+   • Product: [Actual user product if available, e.g. Watermelon Cooling Sunscreen SPF 50+]
+   • Purpose: [Broad-spectrum UV protection against UVA and UVB damage]
+   • Why for you: [Connect to user's profile: e.g. crucial for acne and pigmentation concerns to prevent dark marks (PIH) from darkening under sunlight]
+
+Then, provide a dedicated section:
+
+CURRENT SKINWISE EVALUATION:
+• [Product / Step Name] → [KEEP / CAUTION / REJECT]
+  - Explain the existing decision and mitigations only when an evaluated product is available (e.g. Cleanser is marked CAUTION because of active exfoliating acids on sensitive skin; recommend using alternate mornings or patch testing).
+  - If a step is missing a product in the evaluated routine, note: "[Step Name]: Missing product (SkinWise recommendations are available in your Routine tab to complete this step)."
+
+IMPORTANT: Do NOT invent product names, purposes, or suitability decisions.
+
+3. NIGHT ROUTINE EXPLANATIONS:
+When the user asks:
+- "What is my current night routine?"
+- "Explain my night routine"
+- "What should I do at night?"
+
+• First state the SAVED PROFILE routine clearly:
+  If the profile is set to "Nothing", explicitly state:
+  "Your saved night routine in your profile is currently set to Nothing."
+  Do NOT call it "empty" or "unset" when the stored value is "Nothing".
+• Next, if an evaluated SkinWise routine exists in 'evaluated_skinwise_routine.pm', state:
+  "YOUR EVALUATED SKINWISE NIGHT ROUTINE:"
+  and list the slotted products or missing steps (e.g. Cleanser: Salicylic Acid + LHA 2% Cleanser (CAUTION), Treatment: Missing, Moisturizer: Missing).
+• Briefly explain why having an evening routine (such as cleansing off daytime pollution/sunscreen and moisturizing) is valuable for their skin goals (e.g. nighttime barrier repair and unclogging pores).
+
+4. PROFILE-AWARE EXPLANATIONS FOR SPECIFIC PRODUCTS / INGREDIENTS:
+• When asked "Why is sunscreen important for my skin?", explain the general UV defense AND connect it directly to the user's specific skin profile (e.g. preventing post-inflammatory hyperpigmentation / dark spots from acne, and defending against UV-induced barrier damage).
+• When asked "Why is my cleanser marked CAUTION?", locate the cleanser in 'evaluated_routine_products' (or detailed steps), state the decision CAUTION, and explain the exact reasons (e.g. active chemical exfoliants salicylic acid + LHA may cause irritation or dryness on sensitive skin) and mitigations (e.g. patch test, start 2-3 times weekly).
+
+5. CURRENTLY ANALYZED PRODUCT CONTEXT:
 • If 'currently_analyzed_product_on_page' is present in the context:
   When asked "Why was this product rejected/cautioned/recommended for me?" or questions about "this product":
   - Use the authoritative decision (KEEP, CAUTION, or REJECT), match_label, reasons, and mitigations in 'currently_analyzed_product_on_page'.
@@ -238,19 +459,19 @@ CURRENTLY ANALYZED PRODUCT CONTEXT:
 • If 'currently_analyzed_product_on_page' is not present in context:
   - Check the user's evaluated routine products, or politely invite the user to specify which product they would like to discuss.
 
-FORMATTING RULES (STRICT TYPOGRAPHY - NO RAW MARKDOWN SYNTAX):
+6. FORMATTING RULES (STRICT TYPOGRAPHY - NO RAW MARKDOWN SYNTAX):
 • Do NOT use raw Markdown formatting syntax. NEVER use double asterisks (**), single asterisks (*), hashtags (### or ##), backticks (`), or underscores (_).
 • The client UI renders rich styled typography. If you include raw asterisks like **bold** or *italic*, it breaks the UI.
 • For bulleted lists, use a standard bullet point character '• ' at the beginning of each item on a new line.
-• Use plain capitalized section titles like 'SAVED PROFILE ROUTINE:' or 'WHY THIS DECISION:' without markdown wrappers.
-• Write labels like 'Why:' or 'Mitigation:' in plain text, never '*Why:*'.
+• Use plain capitalized section titles like 'YOUR CURRENT MORNING ROUTINE:' or 'CURRENT SKINWISE EVALUATION:' without markdown wrappers.
+• Write labels like 'Product:' or 'Why for you:' in plain text, never '*Product:*' or '**Product:**'.
 
-DISCLAIMER & MEDICAL BOUNDARY RULES:
+7. DISCLAIMER & MEDICAL BOUNDARY RULES:
 • Do NOT repeat the phrase "I am an AI assistant, not a doctor" or similar disclaimers on everyday skincare, routine, or ingredient questions. The application interface already displays a persistent educational banner.
 • ONLY provide a firm medical boundary when the user asks for prescription medication, medical diagnosis, active skin infection treatment, or severe clinical dermatological issues (e.g., "What prescription medicine should I take for acne?").
 • On those specific medical questions, clearly explain that SkinWise provides educational skincare analysis and cannot prescribe medications or diagnose clinical diseases, and recommend consulting a board-certified dermatologist.
 
-DERMATOLOGIST SEARCH ACTIONS:
+8. DERMATOLOGIST SEARCH ACTIONS:
 • When the user asks to find a dermatologist or doctor near them, acknowledge their location and inform them that an interactive Google Maps search button is provided directly below.
 
 AUTHENTICATED USER CONTEXT (Grounded Truth Source):
