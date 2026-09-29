@@ -302,7 +302,12 @@ async def chat_with_assistant(
             full_prompt += "Previous conversation:\n" + "\n".join(formatted_history) + "\n\n"
         full_prompt += f"User message: {user_message}"
 
-        candidate_models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-flash-latest"]
+        candidate_models = [
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-flash-lite-latest",
+            "gemini-3.8-flash",
+        ]
         raw_text = None
         last_error = None
 
@@ -314,7 +319,7 @@ async def chat_with_assistant(
             client = genai.Client(
                 api_key=api_key,
                 http_options=types.HttpOptions(
-                    timeout=20000,
+                    timeout=15000,
                     retry_options=types.HttpRetryOptions(attempts=2)
                 )
             )
