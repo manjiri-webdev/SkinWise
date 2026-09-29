@@ -7,11 +7,18 @@ import {
   Send,
   RotateCcw,
   AlertCircle,
-  User,
   ShieldAlert,
   Loader2,
+  MapPin,
+  ExternalLink,
+  Tag,
+  ArrowRight,
 } from "lucide-react";
-import { sendChatMessage, type ChatMessage } from "@/services/chat";
+import {
+  sendChatMessage,
+  type ChatMessage,
+  type CurrentProductContext,
+} from "@/services/chat";
 
 interface ChatDrawerProps {
   isOpen: boolean;
@@ -22,39 +29,38 @@ const INITIAL_MESSAGE: ChatMessage = {
   id: "welcome-msg",
   role: "assistant",
   content:
-    "Hello! I am your **SkinWise AI Assistant** ✨\n\nI can help you understand your personalized skincare profile, evaluate routine products, explain ingredient safety, and review your latest skin analysis.\n\n*SkinWise evaluations (KEEP / CAUTION / REJECT) are backed by scientific evidence and your profile.*",
+    "Hello! I am your SkinWise AI Assistant ✨\n\nI can help you understand your personalized skincare profile, evaluate routine products, explain ingredient safety, and review your latest skin analysis.\n\nSkinWise evaluations (KEEP / CAUTION / REJECT) are backed by scientific evidence and your profile.",
   suggested_actions: [
-    "Explain my current routine",
+    "Explain my saved morning and night routine",
     "Why was my product cautioned?",
-    "Explain glycolic acid for my skin",
+    "Explain glycolic acid for my skin profile",
     "What does my skin analysis mean?",
   ],
 };
 
 const QUICK_STARTERS = [
-  "Explain my current routine",
-  "Why was my product cautioned?",
-  "What is my skin type and concerns?",
-  "Explain glycolic acid",
+  "Explain my saved morning and night routine",
+  "Why was my product cautioned or rejected?",
   "What does my latest skin analysis mean?",
-  "When should I see a dermatologist?",
+  "Explain glycolic acid for my skin profile",
+  "Find a dermatologist near me",
 ];
 
 /**
- * Lightweight, safe Markdown renderer for chat messages.
- * Handles bold (**text**), bullet points (- / *), code (`code`), headers (###), and line breaks.
+ * Clean typography renderer for assistant chat responses.
+ * Renders bold headers, bullet items, and plain text cleanly without leaking raw markdown syntax.
  */
-function MarkdownRenderer({ text }: { text: string }) {
+function CleanTypographyRenderer({ text }: { text: string }) {
   const lines = text.split("\n");
 
   const renderInline = (str: string): React.ReactNode[] => {
-    // Split by bold (**...**) and inline code (`...`)
+    // Cleanly process bold (**...**) and inline code (`...`) and strip rogue asterisks
     const parts = str.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
     return parts.map((part, idx) => {
       if (part.startsWith("**") && part.endsWith("**")) {
         return (
           <strong key={idx} className="font-semibold text-gray-900">
-            {part.slice(2, -2)}
+            {part.slice(2, -2).replace(/\*/g, "")}
           </strong>
         );
       }
@@ -62,45 +68,69 @@ function MarkdownRenderer({ text }: { text: string }) {
         return (
           <code
             key={idx}
-            className="px-1.5 py-0.5 rounded bg-pink-50 text-[#DE688E] text-xs font-mono"
+            className="px-1.5 py-0.5 rounded bg-pink-50 text-[#DE688E] text-xs font-mono font-medium"
           >
             {part.slice(1, -1)}
           </code>
         );
       }
-      return <span key={idx}>{part}</span>;
+      // Strip any residual stray asterisks or hashes from plain text segments
+      const sanitized = part.replace(/\*\*/g, "").replace(/(?<!\w)\*(?!\w)/g, "");
+      return <span key={idx}>{sanitized}</span>;
     });
   };
 
   return (
-    <div className="space-y-1.5 leading-relaxed">
+    <div className="space-y-1.5 leading-relaxed text-[13.5px]">
       {lines.map((line, idx) => {
-        const trimmed = line.trim();
+        let trimmed = line.trim();
         if (!trimmed) {
-          return <div key={idx} className="h-2" />;
+          return <div key={idx} className="h-1.5" />;
         }
-        if (trimmed.startsWith("### ")) {
+
+        // Strip leading markdown headers
+        if (trimmed.startsWith("### ") || trimmed.startsWith("## ") || trimmed.startsWith("# ")) {
+          trimmed = trimmed.replace(/^#{1,4}\s+/, "");
           return (
-            <h4 key={idx} className="font-bold text-[#DE688E] text-sm mt-2 mb-1">
-              {renderInline(trimmed.slice(4))}
+            <h4 key={idx} className="font-bold text-[#DE688E] text-xs uppercase tracking-wider mt-3 mb-1">
+              {renderInline(trimmed)}
             </h4>
           );
         }
-        if (trimmed.startsWith("## ")) {
+
+        // Section header labels (e.g., "SAVED PROFILE ROUTINE:" or "WHY THIS DECISION:")
+        if (trimmed.endsWith(":") && (trimmed === trimmed.toUpperCase() || trimmed.length < 35)) {
           return (
-            <h3 key={idx} className="font-bold text-[#DE688E] text-base mt-2.5 mb-1">
-              {renderInline(trimmed.slice(3))}
-            </h3>
+            <p key={idx} className="font-bold text-gray-900 text-xs tracking-wide uppercase mt-2.5 mb-0.5">
+              {renderInline(trimmed)}
+            </p>
           );
         }
-        if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+
+        // Bullet points (•, -, or *)
+        if (trimmed.startsWith("• ") || trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+          const bulletText = trimmed.replace(/^[•\-\*]\s+/, "");
           return (
-            <div key={idx} className="flex items-start gap-2 pl-1 my-0.5">
-              <span className="text-[#DE688E] font-bold text-xs mt-1.5 shrink-0">•</span>
-              <span className="flex-1">{renderInline(trimmed.slice(2))}</span>
+            <div key={idx} className="flex items-start gap-2 pl-1 my-1">
+              <span className="text-[#DE688E] font-bold text-xs mt-1 shrink-0">•</span>
+              <span className="flex-1">{renderInline(bulletText)}</span>
             </div>
           );
         }
+
+        // Numbered list items (e.g. "1. ")
+        const numberedMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
+        if (numberedMatch) {
+          return (
+            <div key={idx} className="flex items-start gap-2 pl-1 my-1">
+              <span className="text-[#DE688E] font-semibold text-xs mt-0.5 shrink-0">
+                {numberedMatch[1]}.
+              </span>
+              <span className="flex-1">{renderInline(numberedMatch[2])}</span>
+            </div>
+          );
+        }
+
         return <p key={idx}>{renderInline(trimmed)}</p>;
       })}
     </div>
@@ -112,8 +142,38 @@ export default function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
   const [input, setInput] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentProduct, setCurrentProduct] = useState<CurrentProductContext | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Sync active product evaluation from sessionStorage when drawer opens
+  useEffect(() => {
+    if (isOpen) {
+      try {
+        const raw = sessionStorage.getItem("skinwise_current_product_analysis");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          setCurrentProduct(parsed);
+        } else {
+          setCurrentProduct(null);
+        }
+      } catch (err) {
+        console.warn("[ChatDrawer] Could not read product snapshot:", err);
+        setCurrentProduct(null);
+      }
+    }
+  }, [isOpen]);
+
+  // Listen for live product evaluation events
+  useEffect(() => {
+    const handleProductEvaluated = (e: any) => {
+      if (e.detail) {
+        setCurrentProduct(e.detail);
+      }
+    };
+    window.addEventListener("skinwise_product_evaluated", handleProductEvaluated);
+    return () => window.removeEventListener("skinwise_product_evaluated", handleProductEvaluated);
+  }, []);
 
   // Auto-scroll on new message
   useEffect(() => {
@@ -154,7 +214,7 @@ export default function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
-    // Keep history excluding the welcome message for API payload
+    // Keep history excluding the initial welcome message for API payload
     const updatedHistory = [...messages, userMsg];
     setMessages(updatedHistory);
     setLoading(true);
@@ -164,13 +224,14 @@ export default function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
         .filter((m) => m.id !== "welcome-msg")
         .slice(-6);
 
-      const response = await sendChatMessage(query, historyForApi);
+      const response = await sendChatMessage(query, historyForApi, currentProduct);
 
       const assistantMsg: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: "assistant",
         content: response.reply,
         suggested_actions: response.suggested_actions,
+        dermatologist_search: response.dermatologist_search,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
 
@@ -250,9 +311,51 @@ export default function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
         <div className="bg-amber-50/80 border-b border-amber-100 px-4 py-2 flex items-start gap-2.5 text-xs text-amber-900/90 shrink-0">
           <ShieldAlert size={14} className="text-amber-600 mt-0.5 shrink-0" />
           <p className="leading-snug">
-            Educational assistant only. Not medical advice. For skin conditions, please consult a dermatologist.
+            Educational assistant only. Not medical advice. For skin conditions or prescriptions, please consult a board-certified dermatologist.
           </p>
         </div>
+
+        {/* Active Product Evaluation Banner (if on product analysis page) */}
+        {currentProduct && currentProduct.product_name && (
+          <div className="bg-gradient-to-r from-pink-50/90 to-rose-50/90 border-b border-pink-200/80 px-4 py-2.5 flex items-center justify-between gap-3 shrink-0">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#DE688E] flex items-center gap-1">
+                  <Tag size={11} />
+                  Active Product
+                </span>
+                {currentProduct.decision && (
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.2 rounded-full ${
+                      currentProduct.decision === "KEEP"
+                        ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                        : currentProduct.decision === "CAUTION"
+                        ? "bg-amber-100 text-amber-800 border border-amber-200"
+                        : "bg-red-100 text-red-800 border border-red-200"
+                    }`}
+                  >
+                    {currentProduct.decision}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs font-bold text-gray-900 truncate mt-0.5">
+                {currentProduct.product_name}
+                {currentProduct.brand ? ` • ${currentProduct.brand}` : ""}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                handleSendMessage(
+                  `Why was ${currentProduct.product_name} evaluated as ${currentProduct.decision || "this"} for my skin?`
+                )
+              }
+              className="shrink-0 text-[11px] font-semibold text-[#DE688E] hover:text-[#c45377] bg-white border border-pink-200 px-2.5 py-1.5 rounded-xl hover:bg-pink-50 transition cursor-pointer shadow-2xs"
+            >
+              Ask About This
+            </button>
+          </div>
+        )}
 
         {/* Messages Body */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -275,7 +378,23 @@ export default function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                   {isUser ? (
                     <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                   ) : (
-                    <MarkdownRenderer text={msg.content} />
+                    <CleanTypographyRenderer text={msg.content} />
+                  )}
+
+                  {/* Interactive Dermatologist Search Action Button */}
+                  {!isUser && msg.dermatologist_search && (
+                    <div className="mt-3 pt-2.5 border-t border-gray-100">
+                      <a
+                        href={msg.dermatologist_search.maps_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold border border-blue-200 transition shadow-2xs group"
+                      >
+                        <MapPin size={15} className="text-blue-600 group-hover:scale-110 transition shrink-0" />
+                        <span>{msg.dermatologist_search.label}</span>
+                        <ExternalLink size={13} className="text-blue-400 group-hover:text-blue-600 shrink-0 ml-0.5" />
+                      </a>
+                    </div>
                   )}
                 </div>
 
@@ -325,7 +444,7 @@ export default function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
                     className="w-full text-left text-xs bg-white hover:bg-pink-50/70 text-gray-700 hover:text-[#DE688E] border border-gray-200/80 hover:border-pink-200 rounded-xl px-3.5 py-2.5 transition flex items-center justify-between group cursor-pointer shadow-xs"
                   >
                     <span>{starter}</span>
-                    <span className="text-gray-300 group-hover:text-[#DE688E] transition">→</span>
+                    <ArrowRight size={13} className="text-gray-300 group-hover:text-[#DE688E] transition shrink-0" />
                   </button>
                 ))}
               </div>
@@ -334,9 +453,9 @@ export default function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
 
           {/* Loading Indicator */}
           {loading && (
-            <div className="flex items-center gap-2.5 bg-white border border-gray-100 rounded-2xl rounded-bl-xs p-3.5 max-w-[70%] shadow-xs text-xs text-gray-500">
-              <Loader2 size={16} className="animate-spin text-[#DE688E]" />
-              <span>Checking your profile and formulation data...</span>
+            <div className="flex items-center gap-2.5 bg-white border border-gray-100 rounded-2xl rounded-bl-xs p-3.5 max-w-[75%] shadow-xs text-xs text-gray-500">
+              <Loader2 size={16} className="animate-spin text-[#DE688E] shrink-0" />
+              <span>Analyzing formulation, routine, and skin profile...</span>
             </div>
           )}
 
@@ -398,7 +517,7 @@ export default function ChatDrawer({ isOpen, onClose }: ChatDrawerProps) {
             </button>
           </form>
           <p className="text-[10px] text-center text-gray-400 mt-2">
-            SkinWise AI Assistant gives personalized explanations • Never overrides safety rules
+            SkinWise AI Assistant provides educational explanations • Not medical advice
           </p>
         </footer>
       </aside>

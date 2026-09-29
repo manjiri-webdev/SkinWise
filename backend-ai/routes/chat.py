@@ -17,14 +17,37 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class CurrentProductContext(BaseModel):
+    product_name: Optional[str] = None
+    brand: Optional[str] = None
+    category: Optional[str] = None
+    decision: Optional[str] = None  # KEEP, CAUTION, REJECT
+    match_label: Optional[str] = None
+    confidence: Optional[str] = None
+    reasons: Optional[List[str]] = Field(default_factory=list)
+    mitigations: Optional[List[str]] = Field(default_factory=list)
+    reason_codes: Optional[List[str]] = Field(default_factory=list)
+    suitable_count: Optional[int] = None
+    caution_count: Optional[int] = None
+    not_recommended_count: Optional[int] = None
+
+
+class DermatologistSearchAction(BaseModel):
+    label: str
+    query: str
+    maps_url: str
+
+
 class ChatRequest(BaseModel):
     message: str
     conversation_history: Optional[List[ChatMessage]] = Field(default_factory=list)
+    current_product: Optional[CurrentProductContext] = None
 
 
 class ChatResponse(BaseModel):
     reply: str
     suggested_actions: Optional[List[str]] = Field(default_factory=list)
+    dermatologist_search: Optional[DermatologistSearchAction] = None
 
 
 def _extract_sanitized_user_context(user_id: str) -> Dict[str, Any]:
@@ -154,52 +177,81 @@ def _extract_sanitized_user_context(user_id: str) -> Dict[str, Any]:
     except Exception as e:
         print(f"[CHAT] Error computing personalization context: {e}")
 
+    saved_morning_routine = profile.get("morning_routine") or []
+    saved_night_routine = profile.get("night_routine") or []
+    user_city = profile.get("city") or environment.get("city") or ""
+
     return {
         "profile": clean_profile,
+        "saved_profile_routine": {
+            "morning_routine": saved_morning_routine,
+            "night_routine": saved_night_routine
+        },
+        "user_city": user_city,
         "environment": clean_environment,
         "latest_skin_analysis": clean_analysis,
         "product_history": clean_product_history,
-        "routine": clean_routine,
+        "evaluated_skinwise_routine": clean_routine,
         "evaluated_routine_products": clean_evaluated_products,
         "recommendations": clean_recommendations,
         "cross_product_interactions": cross_product_interactions
     }
 
 
-def _build_system_prompt(user_context: Dict[str, Any]) -> str:
-    """Build grounded system prompt with strict safety instructions and user context."""
-    context_json = json.dumps(user_context, indent=2)
+def _build_system_prompt(
+    user_context: Dict[str, Any],
+    current_product: Optional[CurrentProductContext] = None
+) -> str:
+    """Build grounded system prompt with strict safety instructions, product context, and clean typography."""
+    context_copy = dict(user_context)
+    if current_product and current_product.product_name:
+        context_copy["currently_analyzed_product_on_page"] = current_product.model_dump()
+
+    context_json = json.dumps(context_copy, indent=2)
 
     return f"""You are the SkinWise AI Assistant.
 
 Your role is to help the authenticated SkinWise user understand their skin profile, current SkinWise results, skincare routine, products and ingredients.
 
-You may:
-- explain skincare concepts
-- explain ingredients
-- explain a user's existing SkinWise routine
-- explain why SkinWise recommended a product
-- explain why SkinWise marked a product KEEP, CAUTION or REJECT
-- answer general skincare education questions
-- provide general routine guidance based on the supplied SkinWise context
-- explain the user's latest skin-analysis result in understandable language
+CORE CAPABILITIES:
+• Explain skincare concepts and ingredients
+• Explain the user's saved profile routine and evaluated SkinWise routine
+• Explain why a product is marked KEEP, CAUTION or REJECT
+• Explain why a product was recommended
+• Explain the user's latest facial skin analysis in simple, reassuring language
 
-You must:
-- use the supplied user profile when relevant
-- personalize explanations using the supplied context
-- clearly distinguish SkinWise analysis from general educational information
-- never claim to diagnose a medical condition
-- never prescribe medication
-- never present yourself as a dermatologist
-- never invent a SkinWise suitability decision
-- never override a KEEP/CAUTION/REJECT decision supplied by the existing engine
-- never claim that a product is safe merely because an ingredient is generally considered safe
-- recommend professional medical consultation when the question requires diagnosis or treatment
+ROUTINE CONTEXT RULES (GROUND TRUTH):
+• When the user asks "What is my morning / AM routine?" or "What is my night / PM routine?":
+  - First consult 'saved_profile_routine'.
+  - If 'morning_routine' or 'night_routine' has steps (e.g. ["Moisturizer", "Sunscreen"] or ["Nothing"]), clearly state:
+    "Your saved morning routine includes: Moisturizer and Sunscreen." (or "In your profile, your night routine is set to Nothing.")
+  - If 'evaluated_skinwise_routine' has slotted products or missing steps, explain them as your evaluated SkinWise routine:
+    "In your evaluated SkinWise routine: [list slotted products and decisions]."
+  - NEVER claim the user's routine is empty when 'saved_profile_routine' contains items!
 
-When explaining a product decision:
-- use the existing SkinWise decision and reason codes as authoritative
-- explain which user-specific factors contributed to the result
-- do not recalculate the suitability score independently
+CURRENTLY ANALYZED PRODUCT CONTEXT:
+• If 'currently_analyzed_product_on_page' is present in the context:
+  When asked "Why was this product rejected/cautioned/recommended for me?" or questions about "this product":
+  - Use the authoritative decision (KEEP, CAUTION, or REJECT), match_label, reasons, and mitigations in 'currently_analyzed_product_on_page'.
+  - Connect this decision directly to the user's specific skin profile (e.g. skin type, sensitivity level, barrier goals).
+  - NEVER alter, recalculate, or invent a different decision.
+• If 'currently_analyzed_product_on_page' is not present in context:
+  - Check the user's evaluated routine products, or politely invite the user to specify which product they would like to discuss.
+
+FORMATTING RULES (STRICT TYPOGRAPHY - NO RAW MARKDOWN SYNTAX):
+• Do NOT use raw Markdown formatting syntax. NEVER use double asterisks (**), single asterisks (*), hashtags (### or ##), backticks (`), or underscores (_).
+• The client UI renders rich styled typography. If you include raw asterisks like **bold** or *italic*, it breaks the UI.
+• For bulleted lists, use a standard bullet point character '• ' at the beginning of each item on a new line.
+• Use plain capitalized section titles like 'SAVED PROFILE ROUTINE:' or 'WHY THIS DECISION:' without markdown wrappers.
+• Write labels like 'Why:' or 'Mitigation:' in plain text, never '*Why:*'.
+
+DISCLAIMER & MEDICAL BOUNDARY RULES:
+• Do NOT repeat the phrase "I am an AI assistant, not a doctor" or similar disclaimers on everyday skincare, routine, or ingredient questions. The application interface already displays a persistent educational banner.
+• ONLY provide a firm medical boundary when the user asks for prescription medication, medical diagnosis, active skin infection treatment, or severe clinical dermatological issues (e.g., "What prescription medicine should I take for acne?").
+• On those specific medical questions, clearly explain that SkinWise provides educational skincare analysis and cannot prescribe medications or diagnose clinical diseases, and recommend consulting a board-certified dermatologist.
+
+DERMATOLOGIST SEARCH ACTIONS:
+• When the user asks to find a dermatologist or doctor near them, acknowledge their location and inform them that an interactive Google Maps search button is provided directly below.
 
 AUTHENTICATED USER CONTEXT (Grounded Truth Source):
 {context_json}
@@ -207,15 +259,9 @@ AUTHENTICATED USER CONTEXT (Grounded Truth Source):
 RESPONSE FORMAT:
 You must respond with valid JSON matching this schema:
 {{
-  "reply": "Your friendly, concise, evidence-aware markdown response here.",
-  "suggested_actions": ["Short follow-up question or quick prompt 1", "Short follow-up question or quick prompt 2"]
+  "reply": "Your friendly, concise, evidence-aware response using plain text and bullet points (• ) without any asterisks or raw markdown syntax.",
+  "suggested_actions": ["Short follow-up prompt 1", "Short follow-up prompt 2"]
 }}
-
-Guidelines for reply content:
-- Use clean Markdown formatting (bullet points, bold highlights) for readability.
-- When referencing routine products, always respect the decision (KEEP, CAUTION, or REJECT) in the user context.
-- Keep the tone warm, empowering, and scientifically grounded.
-- If asked about a product or analysis not present in the user context, clearly state that it is not in their current record rather than inventing facts.
 """
 
 
@@ -243,7 +289,7 @@ async def chat_with_assistant(
     try:
         # 1. Retrieve sanitized user context
         user_context = _extract_sanitized_user_context(user_id)
-        system_instruction = _build_system_prompt(user_context)
+        system_instruction = _build_system_prompt(user_context, request.current_product)
 
         # 2. Build conversational contents
         formatted_history = []
@@ -256,7 +302,7 @@ async def chat_with_assistant(
             full_prompt += "Previous conversation:\n" + "\n".join(formatted_history) + "\n\n"
         full_prompt += f"User message: {user_message}"
 
-        candidate_models = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"]
+        candidate_models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-flash-latest"]
         raw_text = None
         last_error = None
 
@@ -343,9 +389,30 @@ async def chat_with_assistant(
             reply = raw_text
             suggested_actions = ["Explain my routine", "Why is my product on caution?"]
 
+        # Clean residual markdown symbols from reply for clean typography
+        reply = re.sub(r'\*\*(.*?)\*\*', r'\1', reply)
+        reply = re.sub(r'(?<!\w)\*([^\*]+)\*(?!\w)', r'\1', reply)
+        reply = re.sub(r'#{1,6}\s*', '', reply)
+
+        # 5. Check if user is asking to find/locate a dermatologist
+        dermatologist_search_action = None
+        derm_pattern = r'\b(dermatologist|dermatologists|skin\s+doctor|derm)\b'
+        loc_pattern = r'\b(find|search|near|locate|recommend|consult|clinic|specialist|doctor|address|map|nearby|book|see|visit)\b'
+        if re.search(derm_pattern, user_message, re.IGNORECASE) and re.search(loc_pattern, user_message, re.IGNORECASE):
+            import urllib.parse
+            user_city = (user_context.get("user_city") or "").strip()
+            search_query = f"dermatologist near {user_city}" if user_city else "dermatologist near me"
+            encoded_query = urllib.parse.quote_plus(search_query)
+            dermatologist_search_action = DermatologistSearchAction(
+                label=f"Search Dermatologists near {user_city}" if user_city else "Search Dermatologists Near Me",
+                query=search_query,
+                maps_url=f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
+            )
+
         return ChatResponse(
             reply=reply,
-            suggested_actions=suggested_actions[:3]
+            suggested_actions=suggested_actions[:3],
+            dermatologist_search=dermatologist_search_action
         )
 
     except HTTPException:

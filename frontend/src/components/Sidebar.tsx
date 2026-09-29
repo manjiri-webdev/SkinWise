@@ -365,29 +365,6 @@ export default function Sidebar() {
                   </li>
                 );
               })}
-              <li>
-                <button
-                  type="button"
-                  onClick={() => setChatOpen(true)}
-                  className={`w-full flex items-center justify-between px-4 py-3 rounded-full text-sm font-semibold transition-all duration-200 cursor-pointer ${
-                    chatOpen
-                      ? "bg-[#FDECEF] text-[#DE688E] shadow-sm"
-                      : "text-[#55505C] hover:text-[#DE688E] hover:bg-pink-50/60"
-                  }`}
-                >
-                  <div className="flex items-center gap-3.5">
-                    <Sparkles
-                      size={20}
-                      strokeWidth={chatOpen ? 2.4 : 2}
-                      className={chatOpen ? "text-[#DE688E]" : "text-[#7A7382]"}
-                    />
-                    <span>AI Assistant</span>
-                  </div>
-                  <span className="text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-full bg-pink-100 text-[#DE688E]">
-                    AI
-                  </span>
-                </button>
-              </li>
             </ul>
           </nav>
         </div>
@@ -431,6 +408,32 @@ export default function Sidebar() {
           )}
         </div>
       </aside>
+
+      {/* ---------------- DESKTOP FLOATING ACTION GROUP (>= 1024px) ---------------- */}
+      <div className="hidden lg:flex fixed bottom-6 right-8 z-40 items-center gap-2 p-1.5 bg-white/90 backdrop-blur-md rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-pink-100/90 transition-all hover:shadow-[0_12px_36px_rgb(0,0,0,0.16)]">
+        {/* Secondary: Analyze Skin */}
+        <Link
+          href="/face-analysis"
+          className="flex items-center gap-2 px-3.5 py-2.5 rounded-full bg-gray-50/90 hover:bg-pink-50/60 text-[#55505C] hover:text-[#DE688E] border border-gray-200/70 hover:border-pink-200 transition-all text-xs font-semibold cursor-pointer group"
+          title="Open AI Skin Analysis"
+        >
+          <div className="w-5 h-5 rounded-full bg-white text-[#DE688E] flex items-center justify-center shadow-2xs group-hover:scale-105 transition">
+            <ScanFace size={13} strokeWidth={2.4} />
+          </div>
+          <span>Analyze Skin</span>
+        </Link>
+
+        {/* Primary: SkinWise AI Assistant */}
+        <button
+          type="button"
+          onClick={() => setChatOpen(true)}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-[#DE688E] via-[#E4799D] to-[#F48FB1] hover:from-[#d25980] hover:to-[#e37e9f] text-white text-xs font-bold shadow-sm hover:shadow-md transition-all cursor-pointer group active:scale-95"
+          title="Open SkinWise AI Assistant"
+        >
+          <Sparkles size={14} className="text-white animate-pulse" />
+          <span>✦ SkinWise AI Assistant</span>
+        </button>
+      </div>
 
       {/* Slide-over AI Assistant Chat Drawer */}
       <ChatDrawer isOpen={chatOpen} onClose={() => setChatOpen(false)} />

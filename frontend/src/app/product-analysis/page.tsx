@@ -242,6 +242,37 @@ function ProductAnalysisContent() {
             setEvaluation(evalResult.evaluation);
             setIsEvaluated(true);
 
+            // Store current product evaluation snapshot in sessionStorage for Assistant context
+            try {
+              const evalObj = evalResult.evaluation as any;
+              const currentProductSnapshot = {
+                product_name: productData.product_name,
+                brand: productData.brand,
+                category: productData.category,
+                decision: evalResult.evaluation.decision,
+                match_label:
+                  evalObj.match_label ||
+                  (evalResult.evaluation.decision === "KEEP"
+                    ? "Good Match"
+                    : evalResult.evaluation.decision === "CAUTION"
+                    ? "Use with Caution"
+                    : "Not Recommended"),
+                confidence: evalResult.evaluation.confidence,
+                reasons: evalResult.evaluation.reasons || [],
+                mitigations: evalResult.evaluation.mitigations || [],
+                reason_codes: evalResult.evaluation.reason_codes || [],
+                suitable_count: evalObj.suitable_count,
+                caution_count: evalObj.caution_count,
+                not_recommended_count: evalObj.not_recommended_count,
+              };
+              sessionStorage.setItem("skinwise_current_product_analysis", JSON.stringify(currentProductSnapshot));
+              if (typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("skinwise_product_evaluated", { detail: currentProductSnapshot }));
+              }
+            } catch (storageErr) {
+              console.warn("Could not save product snapshot to sessionStorage:", storageErr);
+            }
+
             // Merge personalized ingredient evaluations from the personalization engine
             if (evalResult.evaluation.ingredient_evaluations?.length) {
               const evalMap = new Map<string, any>();
@@ -738,22 +769,6 @@ function ProductAnalysisContent() {
           </section>
         </>
       )}
-
-      {/* Floating "Analyze Skin" Button (Desktop only: bottom nav handles mobile) */}
-      <button
-        type="button"
-        onClick={() => router.push("/face-analysis")}
-        className="hidden lg:flex btn-analyze-floating fixed bottom-6 right-8 z-40 px-5 py-3.5 items-center gap-3 cursor-pointer"
-        title="Open AI Skin Analysis"
-      >
-        <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center text-white">
-          <ScanFace size={20} strokeWidth={2.4} />
-        </div>
-        <div className="text-left leading-tight">
-          <p className="text-xs font-medium text-white/90">AI Scanner</p>
-          <p className="text-sm font-bold text-white tracking-wide">Analyze Skin</p>
-        </div>
-      </button>
     </div>
   );
 }

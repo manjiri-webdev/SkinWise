@@ -2,11 +2,33 @@ import { supabase } from "@/lib/supabase";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_AI_BACKEND_URL || "http://localhost:8000";
 
+export interface CurrentProductContext {
+  product_name?: string;
+  brand?: string;
+  category?: string;
+  decision?: "KEEP" | "CAUTION" | "REJECT" | string;
+  match_label?: string;
+  confidence?: string;
+  reasons?: string[];
+  mitigations?: string[];
+  reason_codes?: string[];
+  suitable_count?: number;
+  caution_count?: number;
+  not_recommended_count?: number;
+}
+
+export interface DermatologistSearchAction {
+  label: string;
+  query: string;
+  maps_url: string;
+}
+
 export interface ChatMessage {
   id?: string;
   role: "user" | "assistant";
   content: string;
   suggested_actions?: string[];
+  dermatologist_search?: DermatologistSearchAction | null;
   timestamp?: string;
 }
 
@@ -16,11 +38,13 @@ export interface ChatRequest {
     role: "user" | "assistant";
     content: string;
   }>;
+  current_product?: CurrentProductContext;
 }
 
 export interface ChatResponse {
   reply: string;
   suggested_actions?: string[];
+  dermatologist_search?: DermatologistSearchAction | null;
 }
 
 async function getAuthToken(): Promise<string> {
@@ -35,7 +59,8 @@ async function getAuthToken(): Promise<string> {
 
 export async function sendChatMessage(
   message: string,
-  history: ChatMessage[] = []
+  history: ChatMessage[] = [],
+  currentProduct?: CurrentProductContext | null
 ): Promise<ChatResponse> {
   const token = await getAuthToken();
 
@@ -44,16 +69,22 @@ export async function sendChatMessage(
     content: msg.content,
   }));
 
+  const payload: Record<string, any> = {
+    message: message.trim(),
+    conversation_history: formattedHistory,
+  };
+
+  if (currentProduct) {
+    payload.current_product = currentProduct;
+  }
+
   const response = await fetch(`${API_BASE_URL}/chat`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      message: message.trim(),
-      conversation_history: formattedHistory,
-    }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {

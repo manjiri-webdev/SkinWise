@@ -805,22 +805,6 @@ export default function ProfilePage() {
           </div>
         </>
       )}
-
-      {/* Floating "Analyze Skin" Button (Desktop only: bottom nav handles mobile) */}
-      <button
-        type="button"
-        onClick={() => router.push("/face-analysis")}
-        className="hidden lg:flex btn-analyze-floating fixed bottom-6 right-8 z-40 px-5 py-3.5 items-center gap-3 cursor-pointer"
-        title="Open AI Skin Analysis"
-      >
-        <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center text-white">
-          <ScanFace size={20} strokeWidth={2.4} />
-        </div>
-        <div className="text-left leading-tight">
-          <p className="text-xs font-medium text-white/90">AI Scanner</p>
-          <p className="text-sm font-bold text-white tracking-wide">Analyze Skin</p>
-        </div>
-      </button>
     </div>
   );
 }
