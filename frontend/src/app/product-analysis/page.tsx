@@ -147,6 +147,8 @@ function ProductAnalysisContent() {
       }
 
       setProduct(productData);
+      // Auto-scroll to top when product is loaded
+      window.scrollTo({ top: 0, behavior: 'smooth' });
 
       // 2. Parse ingredient names from label
       let ingredientNames: string[] = [];
@@ -344,6 +346,13 @@ function ProductAnalysisContent() {
             }
           }
         }
+        // Auto-scroll to analysis section when evaluation is complete
+        setTimeout(() => {
+          const analysisSection = document.querySelector('.analysis-card');
+          if (analysisSection) {
+            analysisSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 100);
       } catch (persErr) {
         console.warn("Could not evaluate product for user profile:", persErr);
       }

@@ -207,12 +207,44 @@ export default function Questionnaire({ searchParams }: { searchParams: any }) {
   const isEditMode = searchParams?.get("mode") === "edit";
   const totalSteps = isEditMode ? 5 : 6;
 
+  // Auto-scroll refs
+  const cardTopRef = useRef<HTMLDivElement>(null);
+  const step4ContainerRef = useRef<HTMLDivElement>(null);
+  const routineSectionRef = useRef<HTMLDivElement>(null);
+  const usingProductsSectionRef = useRef<HTMLDivElement>(null);
+  const productInputSectionRef = useRef<HTMLDivElement>(null);
+  const productsListBottomRef = useRef<HTMLDivElement>(null);
+  const [canScrollStep4Down, setCanScrollStep4Down] = useState(false);
+
+  const handleStep4Scroll = () => {
+    const el = step4ContainerRef.current;
+    if (!el) return;
+    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+    setCanScrollStep4Down(!isAtBottom && el.scrollHeight > el.clientHeight + 40);
+  };
+
+  // Auto-scroll to top of card on step transition
   useEffect(() => {
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
+    if (cardTopRef.current) {
+      cardTopRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    if (step4ContainerRef.current) {
+      step4ContainerRef.current.scrollTop = 0;
+    }
   }, [step]);
+
+  // Check scroll state when step 4 content changes
+  useEffect(() => {
+    if (step === 4) {
+      const timer = setTimeout(() => {
+        handleStep4Scroll();
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [step, formData.hasRoutine, formData.usingProducts, formData.currentProducts.length]);
 
   const checkQuestionnaireCompletion = async () => {
     try {
@@ -424,6 +456,8 @@ export default function Questionnaire({ searchParams }: { searchParams: any }) {
         }
       }
       setStep(step + 1);
+      // Auto-scroll to top when moving to next step
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
@@ -431,6 +465,8 @@ export default function Questionnaire({ searchParams }: { searchParams: any }) {
     if (step > 1) {
       setError(null);
       setStep(step - 1);
+      // Auto-scroll to top when moving to previous step
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
@@ -618,6 +654,12 @@ export default function Questionnaire({ searchParams }: { searchParams: any }) {
     setSelectedType("");
     setProductInput("");
     setBrandInput("");
+
+    // Auto-scroll so user immediately sees the newly added product with reaction and notes fields
+    setTimeout(() => {
+      productsListBottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      handleStep4Scroll();
+    }, 120);
   };
 
   const removeProduct = (index: number) => {
@@ -724,7 +766,7 @@ export default function Questionnaire({ searchParams }: { searchParams: any }) {
             <p className="text-sm text-[#5A5555]">Loading your profile...</p>
           </div>
         ) : (
-          <div className="w-full flex-1 max-w-2xl ques-card flex flex-col justify-between p-4 sm:p-7 lg:p-8 min-h-[460px]">
+          <div ref={cardTopRef} className="w-full flex-1 max-w-2xl ques-card flex flex-col justify-between p-4 sm:p-7 lg:p-8 min-h-[460px] scroll-mt-6">
             {/* Card Header */}
             <div className="flex items-center gap-3.5 mb-5 pb-2">
               <div className="w-10 h-10 rounded-full bg-[#141414] text-white flex items-center justify-center shrink-0 shadow-sm">
@@ -1058,7 +1100,11 @@ export default function Questionnaire({ searchParams }: { searchParams: any }) {
 
               {/* STEP 4: Routine & Products */}
               {step === 4 && (
-                <div className="space-y-4 max-h-[46vh] overflow-y-auto ques-scrollbar pr-1.5">
+                <div
+                  ref={step4ContainerRef}
+                  onScroll={handleStep4Scroll}
+                  className="space-y-4 max-h-[50vh] sm:max-h-[56vh] overflow-y-auto ques-scrollbar pr-1.5 scroll-smooth relative"
+                >
                   <div>
                     <label className="font-semibold text-xs sm:text-sm text-[#141414] mb-2 block">
                       Do you currently follow a skincare routine?
@@ -1070,7 +1116,20 @@ export default function Questionnaire({ searchParams }: { searchParams: any }) {
                           <button
                             key={item}
                             type="button"
-                            onClick={() => updateField("hasRoutine", item)}
+                            onClick={() => {
+                              updateField("hasRoutine", item);
+                              if (item === "Yes") {
+                                setTimeout(() => {
+                                  routineSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                                  handleStep4Scroll();
+                                }, 100);
+                              } else if (item === "No") {
+                                setTimeout(() => {
+                                  usingProductsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                                  handleStep4Scroll();
+                                }, 100);
+                              }
+                            }}
                             className={`rounded-full px-5 py-2 text-xs sm:text-sm font-medium transition active:scale-[0.98] cursor-pointer ${
                               isSelected
                                 ? "bg-gradient-to-r from-[#F9BAC8] to-[#EE8EA3] text-[#141414] shadow-[0_4px_14px_rgba(238,142,163,0.38)] border border-white/80 font-semibold"
@@ -1085,7 +1144,7 @@ export default function Questionnaire({ searchParams }: { searchParams: any }) {
                   </div>
 
                   {formData.hasRoutine === "Yes" && (
-                    <div className="space-y-3.5 pt-1">
+                    <div ref={routineSectionRef} className="space-y-3.5 pt-1 scroll-mt-3">
                       <div>
                         <label className="font-semibold text-xs text-[#141414] mb-1.5 block">
                           Morning Routine
@@ -1138,7 +1197,7 @@ export default function Questionnaire({ searchParams }: { searchParams: any }) {
                     </div>
                   )}
 
-                  <div className="pt-2 border-t border-white/60">
+                  <div ref={usingProductsSectionRef} className="pt-2 border-t border-white/60 scroll-mt-3">
                     <label className="font-semibold text-xs sm:text-sm text-[#141414] mb-2 block">
                       Are you currently using skincare products?
                     </label>
@@ -1149,7 +1208,15 @@ export default function Questionnaire({ searchParams }: { searchParams: any }) {
                           <button
                             key={item}
                             type="button"
-                            onClick={() => updateField("usingProducts", item)}
+                            onClick={() => {
+                              updateField("usingProducts", item);
+                              if (item === "Yes") {
+                                setTimeout(() => {
+                                  productInputSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                                  handleStep4Scroll();
+                                }, 100);
+                              }
+                            }}
                             className={`rounded-full px-5 py-2 text-xs sm:text-sm font-medium transition active:scale-[0.98] cursor-pointer ${
                               isSelected
                                 ? "bg-gradient-to-r from-[#F9BAC8] to-[#EE8EA3] text-[#141414] shadow-[0_4px_14px_rgba(238,142,163,0.38)] border border-white/80 font-semibold"
@@ -1163,7 +1230,7 @@ export default function Questionnaire({ searchParams }: { searchParams: any }) {
                     </div>
 
                     {formData.usingProducts === "Yes" && (
-                      <div className="space-y-3">
+                      <div ref={productInputSectionRef} className="space-y-3 scroll-mt-3">
                         <div className="flex flex-col sm:flex-row gap-2">
                           <CustomSelect
                             value={selectedType}
@@ -1210,7 +1277,7 @@ export default function Questionnaire({ searchParams }: { searchParams: any }) {
                             {formData.currentProducts.map((product, index) => (
                               <div
                                 key={`${product.type}-${product.productName}-${index}`}
-                                className="bg-white/90 backdrop-blur-md p-3 rounded-2xl border border-white/95 shadow-sm"
+                                className="bg-white/90 backdrop-blur-md p-3 rounded-2xl border border-white/95 shadow-sm scroll-mt-2"
                               >
                                 <div className="flex items-center justify-between">
                                   <div>
@@ -1273,11 +1340,30 @@ export default function Questionnaire({ searchParams }: { searchParams: any }) {
                                 </div>
                               </div>
                             ))}
+                            <div ref={productsListBottomRef} />
                           </div>
                         )}
                       </div>
                     )}
                   </div>
+
+                  {/* Sticky Scroll Indicator when content extends below */}
+                  {canScrollStep4Down && (
+                    <div className="sticky bottom-0 left-0 right-0 flex justify-center pb-1 pt-2 pointer-events-none z-20">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (step4ContainerRef.current) {
+                            step4ContainerRef.current.scrollBy({ top: 160, behavior: "smooth" });
+                          }
+                        }}
+                        className="pointer-events-auto bg-white/95 backdrop-blur-md px-3.5 py-1.5 rounded-full text-[11px] font-semibold text-[#DE688E] shadow-[0_4px_14px_rgba(222,104,142,0.25)] border border-pink-100 flex items-center gap-1.5 cursor-pointer hover:bg-white transition animate-bounce"
+                      >
+                        <span>Scroll down for product details</span>
+                        <ChevronDown size={14} />
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 

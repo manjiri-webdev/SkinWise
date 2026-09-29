@@ -197,6 +197,8 @@ export default function IngredientsPage() {
 
           // Navigate using the actual product_id from the database
           router.push(`/product-analysis?id=${response.product.product_id}`);
+          // Auto-scroll to top after navigation
+          window.scrollTo({ top: 0, behavior: 'smooth' });
           return;
         } else if (response.product.product_name) {
           // If product_id was not immediately returned, navigate with name and brand query params
